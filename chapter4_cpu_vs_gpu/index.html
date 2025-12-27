@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chapter 4: CPU vs GPU I/O Comparison</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: #fff; min-height: 100vh; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { text-align: center; font-size: 2em; margin-bottom: 30px; color: #00d4ff; }
+        .comparison { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-bottom: 30px; }
+        .side { background: rgba(255,255,255,0.05); border-radius: 15px; padding: 25px; border: 2px solid rgba(255,255,255,0.1); }
+        .side h2 { text-align: center; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid; }
+        .cpu-side h2 { color: #4ecdc4; border-color: #4ecdc4; }
+        .gpu-side h2 { color: #ff6b6b; border-color: #ff6b6b; }
+        .cores { display: flex; flex-wrap: wrap; gap: 5px; justify-content: center; margin: 20px 0; }
+        .core { width: 30px; height: 30px; border-radius: 5px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; }
+        .cpu-core { background: linear-gradient(135deg, #4ecdc4, #2d9a8c); }
+        .gpu-thread { background: linear-gradient(135deg, #ff6b6b, #c0392b); width: 4px; height: 4px; border-radius: 1px; }
+        .stats { margin-top: 20px; }
+        .stat { display: flex; justify-content: space-between; padding: 10px; background: rgba(0,0,0,0.2); margin: 5px 0; border-radius: 5px; }
+        .stat-label { color: #aaa; }
+        .stat-value { font-weight: bold; }
+        .table { width: 100%; border-collapse: collapse; margin-top: 30px; }
+        .table th, .table td { padding: 15px; text-align: left; border: 1px solid rgba(255,255,255,0.1); }
+        .table th { background: rgba(0,212,255,0.2); color: #00d4ff; }
+        .table tr:nth-child(even) { background: rgba(255,255,255,0.03); }
+        .highlight { color: #ff6b6b; font-weight: bold; }
+        .scale-viz { text-align: center; margin: 30px 0; padding: 20px; background: rgba(0,0,0,0.3); border-radius: 10px; }
+        .scale-bar { height: 40px; background: #333; border-radius: 5px; margin: 10px 0; position: relative; overflow: hidden; }
+        .scale-fill { height: 100%; border-radius: 5px; transition: width 1s; }
+        .cpu-fill { background: linear-gradient(90deg, #4ecdc4, #2d9a8c); width: 3%; }
+        .gpu-fill { background: linear-gradient(90deg, #ff6b6b, #c0392b); width: 100%; }
+        .nav { text-align: center; margin-top: 30px; }
+        .nav a { color: #00d4ff; text-decoration: none; margin: 0 15px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Chapter 4: CPU vs GPU I/O Comparison</h1>
+        
+        <div class="comparison">
+            <div class="side cpu-side">
+                <h2>CPU System</h2>
+                <div class="cores" id="cpu-cores"></div>
+                <div class="stats">
+                    <div class="stat"><span class="stat-label">Cores:</span><span class="stat-value">~64-128</span></div>
+                    <div class="stat"><span class="stat-label">Threads/Queue:</span><span class="stat-value">1 (dedicated)</span></div>
+                    <div class="stat"><span class="stat-label">Access Pattern:</span><span class="stat-value">Continuous</span></div>
+                    <div class="stat"><span class="stat-label">Queue Contention:</span><span class="stat-value" style="color:#4ecdc4">None</span></div>
+                </div>
+            </div>
+            
+            <div class="side gpu-side">
+                <h2>GPU System (H200)</h2>
+                <div class="cores" id="gpu-threads"></div>
+                <div class="stats">
+                    <div class="stat"><span class="stat-label">Threads:</span><span class="stat-value">270,336</span></div>
+                    <div class="stat"><span class="stat-label">Threads/Queue:</span><span class="stat-value">~4,224 (shared)</span></div>
+                    <div class="stat"><span class="stat-label">Access Pattern:</span><span class="stat-value">Bursty</span></div>
+                    <div class="stat"><span class="stat-label">Queue Contention:</span><span class="stat-value highlight">Severe</span></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="scale-viz">
+            <h3>Thread Scale Comparison</h3>
+            <p style="margin: 10px 0;">CPU (~100 threads)</p>
+            <div class="scale-bar"><div class="scale-fill cpu-fill"></div></div>
+            <p style="margin: 10px 0;">GPU (~270,000 threads)</p>
+            <div class="scale-bar"><div class="scale-fill gpu-fill"></div></div>
+            <p style="margin-top: 15px; color: #ff6b6b; font-weight: bold;">GPU has 2,700x more threads competing for the same queues!</p>
+        </div>
+
+        <table class="table">
+            <tr><th>Metric</th><th>CPU Workload</th><th>GPU Workload</th><th>Ratio</th></tr>
+            <tr><td>Throughput</td><td>500 MB/s - 1 GB/s</td><td>3 - 14+ GB/s</td><td>3-14x</td></tr>
+            <tr><td>IOPS Target</td><td>~1 Million</td><td class="highlight">~100 Million</td><td>100x</td></tr>
+            <tr><td>Latency</td><td>100μs - 1ms</td><td>Timeout-sensitive</td><td>-</td></tr>
+            <tr><td>Threads/Queue</td><td>1</td><td class="highlight">~100,000</td><td>100,000x</td></tr>
+        </table>
+
+        <div class="nav">
+            <a href="../chapter3_doorbell/index.html">← Chapter 3</a>
+            <a href="../index.html">Home</a>
+            <a href="../chapter5_data_paths/index.html">Chapter 5 →</a>
+        </div>
+    </div>
+
+    <script>
+        // Generate CPU cores
+        const cpuContainer = document.getElementById('cpu-cores');
+        for(let i = 0; i < 64; i++) {
+            const core = document.createElement('div');
+            core.className = 'core cpu-core';
+            core.textContent = i;
+            cpuContainer.appendChild(core);
+        }
+
+        // Generate GPU threads (representative sample)
+        const gpuContainer = document.getElementById('gpu-threads');
+        for(let i = 0; i < 500; i++) {
+            const thread = document.createElement('div');
+            thread.className = 'gpu-thread';
+            gpuContainer.appendChild(thread);
+        }
+    </script>
+</body>
+</html>

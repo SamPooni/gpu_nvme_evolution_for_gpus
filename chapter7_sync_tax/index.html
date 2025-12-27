@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chapter 7: Synchronization Tax Calculation</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: #fff; min-height: 100vh; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { text-align: center; font-size: 2em; margin-bottom: 30px; color: #00d4ff; }
+        .calculator { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-bottom: 30px; }
+        .inputs, .outputs { background: rgba(255,255,255,0.05); border-radius: 15px; padding: 25px; }
+        h2 { color: #00d4ff; margin-bottom: 20px; font-size: 1.2em; }
+        .param { margin: 15px 0; }
+        .param label { display: block; margin-bottom: 5px; color: #aaa; font-size: 0.9em; }
+        .param input { width: 100%; padding: 10px; border: none; border-radius: 5px; background: rgba(0,0,0,0.3); color: #fff; font-size: 1em; }
+        .calc-step { padding: 15px; background: rgba(0,0,0,0.2); margin: 10px 0; border-radius: 8px; border-left: 3px solid #00d4ff; }
+        .calc-step .label { color: #aaa; font-size: 0.85em; }
+        .calc-step .value { font-size: 1.5em; font-weight: bold; color: #fff; }
+        .result { margin-top: 20px; padding: 25px; background: linear-gradient(135deg, rgba(231,76,60,0.3), rgba(192,57,43,0.1)); border: 2px solid #e74c3c; border-radius: 10px; text-align: center; }
+        .result .big { font-size: 4em; font-weight: bold; color: #e74c3c; }
+        .result .label { font-size: 1.2em; margin-top: 10px; }
+        .utilization-bar { height: 40px; background: #333; border-radius: 5px; margin: 30px 0; overflow: hidden; position: relative; }
+        .utilization-fill { height: 100%; background: linear-gradient(90deg, #e74c3c, #c0392b); transition: width 0.5s; }
+        .utilization-labels { display: flex; justify-content: space-between; font-size: 0.85em; color: #aaa; }
+        .overhead-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-top: 30px; }
+        .overhead-item { background: rgba(255,255,255,0.05); border-radius: 10px; padding: 15px; text-align: center; }
+        .overhead-item h4 { color: #f39c12; margin-bottom: 10px; font-size: 0.9em; }
+        .overhead-item p { font-size: 0.8em; color: #aaa; }
+        .nav { text-align: center; margin-top: 30px; }
+        .nav a { color: #00d4ff; text-decoration: none; margin: 0 15px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Chapter 7: Synchronization Tax Calculation</h1>
+        
+        <div class="calculator">
+            <div class="inputs">
+                <h2>📊 Input Parameters</h2>
+                <div class="param">
+                    <label>GPU Model</label>
+                    <input type="text" value="NVIDIA H200" readonly>
+                </div>
+                <div class="param">
+                    <label>Number of SMs</label>
+                    <input type="number" id="sms" value="132" onchange="calculate()">
+                </div>
+                <div class="param">
+                    <label>Threads per SM</label>
+                    <input type="number" id="threadsPerSm" value="2048" onchange="calculate()">
+                </div>
+                <div class="param">
+                    <label>Warp Size</label>
+                    <input type="number" id="warpSize" value="32" onchange="calculate()">
+                </div>
+                <div class="param">
+                    <label>NVMe Queues</label>
+                    <input type="number" id="queues" value="64" onchange="calculate()">
+                </div>
+            </div>
+
+            <div class="outputs">
+                <h2>📈 Calculation Steps</h2>
+                <div class="calc-step">
+                    <div class="label">Step 1: Total GPU Threads</div>
+                    <div class="value" id="totalThreads">270,336</div>
+                </div>
+                <div class="calc-step">
+                    <div class="label">Step 2: Threads per Queue</div>
+                    <div class="value" id="threadsPerQueue">4,224</div>
+                </div>
+                <div class="calc-step">
+                    <div class="label">Step 3: Warps per Queue</div>
+                    <div class="value" id="warpsPerQueue">132</div>
+                </div>
+                <div class="calc-step">
+                    <div class="label">Step 4: Active Threads During Sync</div>
+                    <div class="value" id="activeThreads">1 / 32</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="result">
+            <div class="label">SM Utilization During Synchronization</div>
+            <div class="big" id="utilization">3.1%</div>
+            <div class="label" style="color: #e74c3c; margin-top: 20px;">
+                <span id="waste">96.9%</span> of GPU compute capacity WASTED
+            </div>
+        </div>
+
+        <div class="utilization-bar">
+            <div class="utilization-fill" id="utilizationBar" style="width: 3.1%;"></div>
+        </div>
+        <div class="utilization-labels">
+            <span>0%</span>
+            <span style="color: #e74c3c;">← Active: 3.1%</span>
+            <span>50%</span>
+            <span style="color: #666;">Wasted: 96.9% →</span>
+            <span>100%</span>
+        </div>
+
+        <h2 style="margin-top: 40px; text-align: center;">Four Sources of Overhead</h2>
+        <div class="overhead-grid">
+            <div class="overhead-item">
+                <h4>🔄 SM Cycle Loss</h4>
+                <p>1 of 32 threads active during serialization</p>
+            </div>
+            <div class="overhead-item">
+                <h4>💾 L1 Cache Impact</h4>
+                <p>Atomic ops consume cache bandwidth</p>
+            </div>
+            <div class="overhead-item">
+                <h4>⏱️ Rescheduling</h4>
+                <p>Thread yield/reload per sync point</p>
+            </div>
+            <div class="overhead-item">
+                <h4>📦 Memory Overhead</h4>
+                <p>16×QP_size + 256KB per SSD</p>
+            </div>
+        </div>
+
+        <div class="nav">
+            <a href="../chapter6_nvme_queue_ops/index.html">← Chapter 6</a>
+            <a href="../index.html">Home</a>
+            <a href="../chapter8_solutions/index.html">Chapter 8 →</a>
+        </div>
+    </div>
+
+    <script>
+        function calculate() {
+            const sms = parseInt(document.getElementById('sms').value);
+            const threadsPerSm = parseInt(document.getElementById('threadsPerSm').value);
+            const warpSize = parseInt(document.getElementById('warpSize').value);
+            const queues = parseInt(document.getElementById('queues').value);
+
+            const totalThreads = sms * threadsPerSm;
+            const threadsPerQueue = Math.floor(totalThreads / queues);
+            const warpsPerQueue = Math.floor(threadsPerQueue / warpSize);
+            const utilization = (1 / warpSize * 100).toFixed(1);
+            const waste = (100 - utilization).toFixed(1);
+
+            document.getElementById('totalThreads').textContent = totalThreads.toLocaleString();
+            document.getElementById('threadsPerQueue').textContent = threadsPerQueue.toLocaleString();
+            document.getElementById('warpsPerQueue').textContent = warpsPerQueue.toLocaleString();
+            document.getElementById('activeThreads').textContent = `1 / ${warpSize}`;
+            document.getElementById('utilization').textContent = utilization + '%';
+            document.getElementById('waste').textContent = waste + '%';
+            document.getElementById('utilizationBar').style.width = utilization + '%';
+        }
+    </script>
+</body>
+</html>

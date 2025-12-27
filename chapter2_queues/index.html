@@ -1,0 +1,1395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chapter 2: NVMe & RDMA Circular Queues</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --secondary: #10b981;
+            --accent: #f59e0b;
+            --danger: #ef4444;
+            --dark: #1e293b;
+            --light: #f8fafc;
+            --nvme-blue: #0ea5e9;
+            --rdma-purple: #a855f7;
+            --queue-green: #22c55e;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            line-height: 1.7;
+            color: var(--dark);
+            background: linear-gradient(135deg, #0c1222 0%, #1a1a2e 50%, #16213e 100%);
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        header {
+            text-align: center;
+            padding: 4rem 2rem;
+            background: linear-gradient(135deg, rgba(14, 165, 233, 0.2) 0%, rgba(168, 85, 247, 0.2) 100%);
+            border-radius: 2rem;
+            margin-bottom: 3rem;
+            border: 1px solid rgba(14, 165, 233, 0.3);
+            backdrop-filter: blur(10px);
+        }
+
+        header h1 {
+            font-size: 3rem;
+            color: white;
+            margin-bottom: 1rem;
+            text-shadow: 0 0 40px rgba(14, 165, 233, 0.5);
+        }
+
+        header .subtitle {
+            font-size: 1.3rem;
+            color: #94a3b8;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .chapter-badge {
+            display: inline-block;
+            background: linear-gradient(135deg, var(--nvme-blue) 0%, var(--rdma-purple) 100%);
+            color: white;
+            padding: 0.5rem 1.5rem;
+            border-radius: 2rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        .section {
+            background: rgba(30, 41, 59, 0.8);
+            border-radius: 1.5rem;
+            padding: 2.5rem;
+            margin-bottom: 2rem;
+            border: 1px solid rgba(14, 165, 233, 0.2);
+            backdrop-filter: blur(10px);
+        }
+
+        .section-header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .section-number {
+            background: linear-gradient(135deg, var(--nvme-blue) 0%, var(--rdma-purple) 100%);
+            color: white;
+            width: 60px;
+            height: 60px;
+            border-radius: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 1.5rem;
+            box-shadow: 0 0 30px rgba(14, 165, 233, 0.4);
+        }
+
+        h2 {
+            color: white;
+            font-size: 1.8rem;
+        }
+
+        h3 {
+            color: #7dd3fc;
+            font-size: 1.4rem;
+            margin: 2rem 0 1rem;
+        }
+
+        h4 {
+            color: #a5b4fc;
+            font-size: 1.1rem;
+            margin: 1.5rem 0 0.75rem;
+        }
+
+        p {
+            color: #cbd5e1;
+            margin-bottom: 1rem;
+        }
+
+        .highlight {
+            color: #fbbf24;
+            font-weight: 600;
+        }
+
+        .key-term {
+            color: #38bdf8;
+            font-weight: 600;
+        }
+
+        .diagram-container {
+            background: linear-gradient(135deg, rgba(15, 23, 42, 0.9) 0%, rgba(30, 41, 59, 0.9) 100%);
+            border-radius: 1rem;
+            padding: 2rem;
+            margin: 2rem 0;
+            border: 1px solid rgba(14, 165, 233, 0.3);
+            overflow: hidden;
+        }
+
+        .diagram-title {
+            text-align: center;
+            color: white;
+            font-weight: 600;
+            margin-bottom: 1.5rem;
+            font-size: 1.2rem;
+        }
+
+        .diagram-caption {
+            text-align: center;
+            color: #94a3b8;
+            font-size: 0.9rem;
+            margin-top: 1rem;
+            font-style: italic;
+        }
+
+        .code-block {
+            background: #0f172a;
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+            overflow-x: auto;
+            border: 1px solid #334155;
+        }
+
+        .code-block code {
+            color: #e2e8f0;
+            font-family: 'Fira Code', 'Consolas', monospace;
+            font-size: 0.9rem;
+            line-height: 1.6;
+        }
+
+        .keyword { color: #c084fc; }
+        .type { color: #22d3ee; }
+        .function { color: #fbbf24; }
+        .comment { color: #64748b; }
+        .number { color: #4ade80; }
+        .field { color: #fb923c; }
+
+        .info-box {
+            background: linear-gradient(135deg, rgba(14, 165, 233, 0.2) 0%, rgba(56, 189, 248, 0.2) 100%);
+            border-left: 4px solid var(--nvme-blue);
+            border-radius: 0 0.75rem 0.75rem 0;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+        }
+
+        .warning-box {
+            background: linear-gradient(135deg, rgba(245, 158, 11, 0.2) 0%, rgba(234, 179, 8, 0.2) 100%);
+            border-left: 4px solid var(--accent);
+            border-radius: 0 0.75rem 0.75rem 0;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+        }
+
+        .comparison-box {
+            background: linear-gradient(135deg, rgba(168, 85, 247, 0.2) 0%, rgba(139, 92, 246, 0.2) 100%);
+            border-left: 4px solid var(--rdma-purple);
+            border-radius: 0 0.75rem 0.75rem 0;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+        }
+
+        .box-title {
+            color: white;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin: 2rem 0;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, var(--nvme-blue) 0%, #0284c7 100%);
+            padding: 1.5rem;
+            border-radius: 1rem;
+            text-align: center;
+            box-shadow: 0 10px 40px rgba(14, 165, 233, 0.3);
+        }
+
+        .stat-card.purple {
+            background: linear-gradient(135deg, var(--rdma-purple) 0%, #7c3aed 100%);
+            box-shadow: 0 10px 40px rgba(168, 85, 247, 0.3);
+        }
+
+        .stat-card.green {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            box-shadow: 0 10px 40px rgba(16, 185, 129, 0.3);
+        }
+
+        .stat-card.orange {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            box-shadow: 0 10px 40px rgba(245, 158, 11, 0.3);
+        }
+
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: bold;
+            color: white;
+        }
+
+        .stat-label {
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 0.9rem;
+            margin-top: 0.5rem;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1.5rem 0;
+        }
+
+        th, td {
+            padding: 1rem;
+            text-align: left;
+            border-bottom: 1px solid #334155;
+        }
+
+        th {
+            background: rgba(14, 165, 233, 0.3);
+            color: white;
+            font-weight: 600;
+        }
+
+        td {
+            color: #cbd5e1;
+        }
+
+        tr:hover {
+            background: rgba(14, 165, 233, 0.1);
+        }
+
+        .nav-links {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 3rem;
+            padding-top: 2rem;
+            border-top: 1px solid #334155;
+        }
+
+        .nav-link {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 1rem 2rem;
+            background: rgba(14, 165, 233, 0.2);
+            color: white;
+            text-decoration: none;
+            border-radius: 0.75rem;
+            transition: all 0.3s ease;
+            border: 1px solid rgba(14, 165, 233, 0.3);
+        }
+
+        .nav-link:hover {
+            background: rgba(14, 165, 233, 0.4);
+            transform: translateY(-2px);
+        }
+
+        footer {
+            text-align: center;
+            padding: 3rem 2rem;
+            color: #64748b;
+        }
+
+        ul, ol {
+            color: #cbd5e1;
+            margin-left: 2rem;
+            margin-bottom: 1rem;
+        }
+
+        li {
+            margin-bottom: 0.5rem;
+        }
+
+        @keyframes rotate {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        @keyframes flow {
+            0% { stroke-dashoffset: 20; }
+            100% { stroke-dashoffset: 0; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="chapter-badge">📚 Chapter 2</div>
+            <h1>🔄 NVMe & RDMA Circular Queues</h1>
+            <p class="subtitle">Understanding the circular queue architecture that powers modern storage and network protocols, from NVMe submission/completion queues to RDMA work queues</p>
+        </header>
+
+        <!-- Section 2.1: Introduction to Circular Queues -->
+        <section class="section">
+            <div class="section-header">
+                <div class="section-number">2.1</div>
+                <h2>Circular Queues: The Foundation</h2>
+            </div>
+
+            <p>Both NVMe and RDMA use <span class="key-term">circular queues</span> (ring buffers) as their fundamental data structure for communication between software and hardware. This design enables efficient, lock-free producer-consumer patterns that are essential for high-performance I/O.</p>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value">64B</div>
+                    <div class="stat-label">NVMe SQ Entry Size</div>
+                </div>
+                <div class="stat-card purple">
+                    <div class="stat-value">16B</div>
+                    <div class="stat-label">NVMe CQ Entry Size</div>
+                </div>
+                <div class="stat-card green">
+                    <div class="stat-value">64K</div>
+                    <div class="stat-label">Max Queue Depth</div>
+                </div>
+                <div class="stat-card orange">
+                    <div class="stat-value">65535</div>
+                    <div class="stat-label">Max Queue Pairs</div>
+                </div>
+            </div>
+
+            <h3>Why Circular Queues?</h3>
+
+            <div id="circular-queue-intro"></div>
+
+            <div class="info-box">
+                <div class="box-title">💡 Key Advantages of Circular Queues</div>
+                <ul>
+                    <li><span class="highlight">Fixed Memory:</span> Pre-allocated, no dynamic allocation during operation</li>
+                    <li><span class="highlight">Cache Friendly:</span> Sequential access patterns, predictable prefetching</li>
+                    <li><span class="highlight">Lock-Free:</span> Single producer, single consumer can operate without locks</li>
+                    <li><span class="highlight">DMA Friendly:</span> Contiguous memory regions ideal for hardware DMA</li>
+                </ul>
+            </div>
+        </section>
+
+        <!-- Section 2.2: NVMe Queue Architecture -->
+        <section class="section">
+            <div class="section-header">
+                <div class="section-number">2.2</div>
+                <h2>NVMe Queue Architecture</h2>
+            </div>
+
+            <p>NVMe uses a <span class="key-term">paired queue model</span> where each I/O path consists of a Submission Queue (SQ) and a Completion Queue (CQ). The host places commands in the SQ, and the controller places completions in the CQ.</p>
+
+            <div id="nvme-queue-pair"></div>
+
+            <h3>2.2.1 Submission Queue (SQ) Structure</h3>
+
+            <p>The Submission Queue contains <span class="key-term">64-byte command entries</span>. Each entry is a complete NVMe command that tells the controller what operation to perform.</p>
+
+            <div class="code-block">
+<code><span class="comment">// NVMe Submission Queue Entry (64 bytes)</span>
+<span class="keyword">struct</span> <span class="type">nvme_command</span> {
+    <span class="type">uint8_t</span>  <span class="field">opcode</span>;           <span class="comment">// Command opcode (read, write, etc.)</span>
+    <span class="type">uint8_t</span>  <span class="field">flags</span>;            <span class="comment">// Command flags</span>
+    <span class="type">uint16_t</span> <span class="field">command_id</span>;       <span class="comment">// Unique ID for tracking (0-65535)</span>
+    <span class="type">uint32_t</span> <span class="field">nsid</span>;             <span class="comment">// Namespace ID</span>
+    <span class="type">uint64_t</span> <span class="field">reserved</span>;
+    <span class="type">uint64_t</span> <span class="field">metadata</span>;         <span class="comment">// Metadata pointer</span>
+    <span class="type">uint64_t</span> <span class="field">prp1</span>;             <span class="comment">// Data pointer 1 (PRP or SGL)</span>
+    <span class="type">uint64_t</span> <span class="field">prp2</span>;             <span class="comment">// Data pointer 2</span>
+    <span class="type">uint32_t</span> <span class="field">cdw10</span>;            <span class="comment">// Command DWORD 10 (LBA low)</span>
+    <span class="type">uint32_t</span> <span class="field">cdw11</span>;            <span class="comment">// Command DWORD 11 (LBA high)</span>
+    <span class="type">uint32_t</span> <span class="field">cdw12</span>;            <span class="comment">// Command DWORD 12 (transfer length)</span>
+    <span class="type">uint32_t</span> <span class="field">cdw13</span>;            <span class="comment">// Command specific</span>
+    <span class="type">uint32_t</span> <span class="field">cdw14</span>;            <span class="comment">// Command specific</span>
+    <span class="type">uint32_t</span> <span class="field">cdw15</span>;            <span class="comment">// Command specific</span>
+};  <span class="comment">// Total: 64 bytes</span>
+</code>
+            </div>
+
+            <h3>2.2.2 Completion Queue (CQ) Structure</h3>
+
+            <p>The Completion Queue contains <span class="key-term">16-byte completion entries</span>. Each entry indicates the result of a command and uses a phase bit for wrap-around detection.</p>
+
+            <div class="code-block">
+<code><span class="comment">// NVMe Completion Queue Entry (16 bytes)</span>
+<span class="keyword">struct</span> <span class="type">nvme_completion</span> {
+    <span class="type">uint32_t</span> <span class="field">result</span>;           <span class="comment">// Command-specific result</span>
+    <span class="type">uint32_t</span> <span class="field">reserved</span>;
+    <span class="type">uint16_t</span> <span class="field">sq_head</span>;          <span class="comment">// SQ head pointer (for flow control)</span>
+    <span class="type">uint16_t</span> <span class="field">sq_id</span>;            <span class="comment">// SQ identifier</span>
+    <span class="type">uint16_t</span> <span class="field">command_id</span>;       <span class="comment">// Matches submission command_id</span>
+    <span class="type">uint16_t</span> <span class="field">status</span>;           <span class="comment">// Status + Phase bit (bit 0)</span>
+};  <span class="comment">// Total: 16 bytes</span>
+
+<span class="comment">// Phase bit is in status field bit 0</span>
+<span class="comment">// Phase toggles each time queue wraps around</span>
+<span class="keyword">#define</span> <span class="function">NVME_CQ_PHASE_BIT</span>(status)  ((status) & <span class="number">0x1</span>)
+</code>
+            </div>
+
+            <div id="nvme-command-flow"></div>
+
+            <h3>2.2.3 The Phase Bit Mechanism</h3>
+
+            <p>The <span class="key-term">phase bit</span> is a clever mechanism that allows the host to detect new completions without comparing indices. When the queue wraps around, the expected phase bit flips.</p>
+
+            <div id="phase-bit-demo"></div>
+
+            <div class="warning-box">
+                <div class="box-title">⚠️ Critical: Phase Bit Polling</div>
+                <p>GPU threads poll the completion queue by checking the phase bit. This is fundamentally different from CPU interrupt-driven I/O. Each thread must continuously read memory until the phase bit matches, consuming GPU cycles and memory bandwidth.</p>
+            </div>
+        </section>
+
+        <!-- Section 2.3: NVMe Doorbell Registers -->
+        <section class="section">
+            <div class="section-header">
+                <div class="section-number">2.3</div>
+                <h2>NVMe Doorbell Registers</h2>
+            </div>
+
+            <p><span class="key-term">Doorbells</span> are memory-mapped registers that the host writes to notify the controller of queue updates. They are the primary synchronization mechanism between host and device.</p>
+
+            <div id="doorbell-visualization"></div>
+
+            <h3>2.3.1 Doorbell Register Layout</h3>
+
+            <div class="code-block">
+<code><span class="comment">// Doorbell registers are at fixed offsets from BAR0</span>
+<span class="comment">// Each queue pair has two doorbells: SQ Tail and CQ Head</span>
+
+<span class="comment">// Submission Queue y Tail Doorbell offset:</span>
+<span class="type">offset</span> = <span class="number">0x1000</span> + (<span class="number">2</span> * y) * (<span class="number">4</span> << <span class="field">DSTRD</span>)
+
+<span class="comment">// Completion Queue y Head Doorbell offset:</span>
+<span class="type">offset</span> = <span class="number">0x1000</span> + (<span class="number">2</span> * y + <span class="number">1</span>) * (<span class="number">4</span> << <span class="field">DSTRD</span>)
+
+<span class="comment">// DSTRD = Doorbell Stride (from CAP register)</span>
+<span class="comment">// Typically 0, meaning 4 bytes between doorbells</span>
+
+<span class="comment">// Example: Queue 0 doorbells (DSTRD=0)</span>
+<span class="comment">// SQ0 Tail: 0x1000</span>
+<span class="comment">// CQ0 Head: 0x1004</span>
+<span class="comment">// SQ1 Tail: 0x1008</span>
+<span class="comment">// CQ1 Head: 0x100C</span>
+</code>
+            </div>
+
+            <div class="info-box">
+                <div class="box-title">💡 Doorbell Write Semantics</div>
+                <p><span class="highlight">SQ Tail Doorbell:</span> Host writes to indicate new commands are available. Value is the new tail index.</p>
+                <p><span class="highlight">CQ Head Doorbell:</span> Host writes to indicate completions have been processed. Value is the new head index.</p>
+                <p>Both writes are <span class="highlight">4 bytes</span> and trigger PCIe posted writes to the controller.</p>
+            </div>
+
+            <h3>2.3.2 The Doorbell Bottleneck</h3>
+
+            <div id="doorbell-bottleneck"></div>
+        </section>
+
+        <!-- Section 2.4: RDMA Queue Architecture -->
+        <section class="section">
+            <div class="section-header">
+                <div class="section-number">2.4</div>
+                <h2>RDMA Queue Architecture</h2>
+            </div>
+
+            <p>RDMA (Remote Direct Memory Access) uses a similar but more sophisticated queue model with <span class="key-term">Queue Pairs (QPs)</span> consisting of Send and Receive Queues, plus Completion Queues.</p>
+
+            <div id="rdma-queue-comparison"></div>
+
+            <h3>2.4.1 RDMA Queue Pair Structure</h3>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Component</th>
+                        <th>NVMe Equivalent</th>
+                        <th>Purpose</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Send Queue (SQ)</td>
+                        <td>Submission Queue</td>
+                        <td>Post send/RDMA operations</td>
+                    </tr>
+                    <tr>
+                        <td>Receive Queue (RQ)</td>
+                        <td>N/A</td>
+                        <td>Post receive buffers for incoming data</td>
+                    </tr>
+                    <tr>
+                        <td>Completion Queue (CQ)</td>
+                        <td>Completion Queue</td>
+                        <td>Receive completion notifications</td>
+                    </tr>
+                    <tr>
+                        <td>Work Request (WR)</td>
+                        <td>SQ Entry (Command)</td>
+                        <td>Describes operation to perform</td>
+                    </tr>
+                    <tr>
+                        <td>Work Completion (WC)</td>
+                        <td>CQ Entry</td>
+                        <td>Completion status and info</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>2.4.2 RDMA Work Request Structure</h3>
+
+            <div class="code-block">
+<code><span class="comment">// RDMA Send Work Request</span>
+<span class="keyword">struct</span> <span class="type">ibv_send_wr</span> {
+    <span class="type">uint64_t</span>         <span class="field">wr_id</span>;        <span class="comment">// User-defined ID (like command_id)</span>
+    <span class="keyword">struct</span> <span class="type">ibv_send_wr</span> *<span class="field">next</span>;       <span class="comment">// Linked list for batch posting</span>
+    <span class="keyword">struct</span> <span class="type">ibv_sge</span>    *<span class="field">sg_list</span>;     <span class="comment">// Scatter-gather list</span>
+    <span class="type">int</span>              <span class="field">num_sge</span>;      <span class="comment">// Number of SGEs</span>
+    <span class="keyword">enum</span> <span class="type">ibv_wr_opcode</span> <span class="field">opcode</span>;     <span class="comment">// SEND, RDMA_WRITE, RDMA_READ, etc.</span>
+    <span class="type">int</span>              <span class="field">send_flags</span>;   <span class="comment">// IBV_SEND_SIGNALED, etc.</span>
+    <span class="keyword">union</span> {
+        <span class="keyword">struct</span> {
+            <span class="type">uint64_t</span> <span class="field">remote_addr</span>;  <span class="comment">// For RDMA operations</span>
+            <span class="type">uint32_t</span> <span class="field">rkey</span>;         <span class="comment">// Remote memory key</span>
+        } <span class="field">rdma</span>;
+        <span class="comment">// ... other operation types</span>
+    };
+};
+
+<span class="comment">// Scatter-Gather Entry</span>
+<span class="keyword">struct</span> <span class="type">ibv_sge</span> {
+    <span class="type">uint64_t</span> <span class="field">addr</span>;    <span class="comment">// Virtual address of buffer</span>
+    <span class="type">uint32_t</span> <span class="field">length</span>;  <span class="comment">// Length of buffer</span>
+    <span class="type">uint32_t</span> <span class="field">lkey</span>;    <span class="comment">// Local memory key</span>
+};
+</code>
+            </div>
+
+            <h3>2.4.3 RDMA Doorbell Mechanism</h3>
+
+            <p>RDMA uses <span class="key-term">BlueFlame</span> (Mellanox) or similar mechanisms for doorbell writes, which can write both the doorbell and the first WQE in a single PCIe transaction.</p>
+
+            <div id="rdma-doorbell-demo"></div>
+
+            <div class="comparison-box">
+                <div class="box-title">🔄 NVMe vs RDMA Doorbell Comparison</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Aspect</th>
+                            <th>NVMe</th>
+                            <th>RDMA</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Doorbell Size</td>
+                            <td>4 bytes (index only)</td>
+                            <td>8+ bytes (can include WQE)</td>
+                        </tr>
+                        <tr>
+                            <td>Write Method</td>
+                            <td>MMIO to BAR</td>
+                            <td>BlueFlame / UAR</td>
+                        </tr>
+                        <tr>
+                            <td>Batching</td>
+                            <td>Single doorbell per batch</td>
+                            <td>Multiple WQEs per doorbell</td>
+                        </tr>
+                        <tr>
+                            <td>GPU Support</td>
+                            <td>Limited (serialization)</td>
+                            <td>GPUDirect RDMA</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Section 2.5: Queue Flow Animation -->
+        <section class="section">
+            <div class="section-header">
+                <div class="section-number">2.5</div>
+                <h2>Complete I/O Flow Visualization</h2>
+            </div>
+
+            <p>Let's trace through a complete NVMe I/O operation from command submission to completion, showing all queue interactions.</p>
+
+            <div id="complete-io-flow"></div>
+
+            <h3>2.5.1 Step-by-Step Breakdown</h3>
+
+            <ol>
+                <li><strong>Command Preparation:</strong> Host builds 64-byte command in memory</li>
+                <li><strong>SQ Entry Write:</strong> Command copied to SQ at tail index</li>
+                <li><strong>Doorbell Ring:</strong> Host writes new tail to SQ Tail Doorbell</li>
+                <li><strong>Controller Fetch:</strong> Controller DMAs command from SQ</li>
+                <li><strong>Data Transfer:</strong> Controller performs DMA read/write for data</li>
+                <li><strong>Completion Post:</strong> Controller DMAs completion entry to CQ</li>
+                <li><strong>Completion Detection:</strong> Host polls phase bit or receives interrupt</li>
+                <li><strong>CQ Head Update:</strong> Host writes new head to CQ Head Doorbell</li>
+            </ol>
+
+            <div id="io-timeline"></div>
+        </section>
+
+        <!-- Section 2.6: Multi-Queue Scaling -->
+        <section class="section">
+            <div class="section-header">
+                <div class="section-number">2.6</div>
+                <h2>Multi-Queue Scaling</h2>
+            </div>
+
+            <p>Modern NVMe SSDs support thousands of queue pairs to enable parallel I/O from multiple CPU cores or GPU threads.</p>
+
+            <div id="multi-queue-demo"></div>
+
+            <h3>2.6.1 Queue Assignment Strategies</h3>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Strategy</th>
+                        <th>CPU Use Case</th>
+                        <th>GPU Challenge</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>1 QP per Core</td>
+                        <td>Optimal - no contention</td>
+                        <td>Insufficient - only ~100 QPs for 200K threads</td>
+                    </tr>
+                    <tr>
+                        <td>Shared QP Pool</td>
+                        <td>Works with locking</td>
+                        <td>Severe serialization</td>
+                    </tr>
+                    <tr>
+                        <td>1 QP per Warp</td>
+                        <td>N/A</td>
+                        <td>Better - ~8K QPs needed</td>
+                    </tr>
+                    <tr>
+                        <td>1 QP per Thread</td>
+                        <td>N/A</td>
+                        <td>Impossible - 200K+ QPs needed</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <div class="warning-box">
+                <div class="box-title">⚠️ The GPU Queue Problem</div>
+                <p>With <span class="highlight">200,000+ concurrent GPU threads</span> potentially accessing storage, and NVMe supporting at most <span class="highlight">65,535 queue pairs</span>, there is a fundamental mismatch. Even if we could create enough queues, the <span class="highlight">doorbell write serialization</span> would devastate performance.</p>
+            </div>
+        </section>
+
+        <!-- Navigation -->
+        <nav class="nav-links">
+            <a href="../chapter1_gpu_threading/index.html" class="nav-link">
+                ← Chapter 1: GPU Threading
+            </a>
+            <a href="../chapter3_doorbell/index.html" class="nav-link">
+                Chapter 3: Doorbell Serialization →
+            </a>
+        </nav>
+    </div>
+
+    <footer>
+        <p>Chapter 2: NVMe & RDMA Circular Queues | GPU-NVMe Documentation Series</p>
+    </footer>
+
+    <!-- React Components -->
+    <script type="text/babel">
+        // Circular Queue Introduction
+        const CircularQueueIntro = () => {
+            const [head, setHead] = React.useState(0);
+            const [tail, setTail] = React.useState(3);
+            const [isAnimating, setIsAnimating] = React.useState(false);
+            const queueSize = 8;
+            
+            const entries = Array.from({length: queueSize}, (_, i) => {
+                if (tail >= head) {
+                    return i >= head && i < tail ? 'filled' : 'empty';
+                } else {
+                    return i >= head || i < tail ? 'filled' : 'empty';
+                }
+            });
+            
+            const enqueue = () => {
+                if ((tail + 1) % queueSize !== head) {
+                    setTail((tail + 1) % queueSize);
+                }
+            };
+            
+            const dequeue = () => {
+                if (head !== tail) {
+                    setHead((head + 1) % queueSize);
+                }
+            };
+            
+            return (
+                <div className="diagram-container">
+                    <div className="diagram-title">Interactive Circular Queue</div>
+                    <div style={{display: 'flex', justifyContent: 'center', gap: '1rem', marginBottom: '1.5rem'}}>
+                        <button onClick={enqueue} style={{
+                            padding: '0.75rem 1.5rem', borderRadius: '0.5rem', border: 'none',
+                            background: '#22c55e', color: 'white', cursor: 'pointer', fontWeight: '600'
+                        }}>
+                            Enqueue (Producer)
+                        </button>
+                        <button onClick={dequeue} style={{
+                            padding: '0.75rem 1.5rem', borderRadius: '0.5rem', border: 'none',
+                            background: '#ef4444', color: 'white', cursor: 'pointer', fontWeight: '600'
+                        }}>
+                            Dequeue (Consumer)
+                        </button>
+                    </div>
+                    
+                    <svg viewBox="0 0 400 400" style={{width: '100%', maxWidth: '400px', margin: '0 auto', display: 'block'}}>
+                        {/* Circle background */}
+                        <circle cx="200" cy="200" r="150" fill="none" stroke="#334155" strokeWidth="40"/>
+                        
+                        {/* Queue entries */}
+                        {entries.map((status, i) => {
+                            const angle = (i * 360 / queueSize - 90) * Math.PI / 180;
+                            const x = 200 + 150 * Math.cos(angle);
+                            const y = 200 + 150 * Math.sin(angle);
+                            return (
+                                <g key={i}>
+                                    <circle cx={x} cy={y} r="20" 
+                                            fill={status === 'filled' ? '#22c55e' : '#1e293b'}
+                                            stroke={i === head ? '#ef4444' : i === tail ? '#3b82f6' : '#475569'}
+                                            strokeWidth="3"/>
+                                    <text x={x} y={y + 5} textAnchor="middle" fill="white" fontSize="12" fontWeight="bold">
+                                        {i}
+                                    </text>
+                                </g>
+                            );
+                        })}
+                        
+                        {/* Head pointer */}
+                        <g transform={`rotate(${head * 360 / queueSize - 90}, 200, 200)`}>
+                            <line x1="200" y1="200" x2="200" y2="70" stroke="#ef4444" strokeWidth="3"/>
+                            <polygon points="200,50 190,70 210,70" fill="#ef4444"/>
+                        </g>
+                        <text x="200" y="200" textAnchor="middle" fill="#ef4444" fontSize="10" dy="-10">HEAD</text>
+                        
+                        {/* Tail pointer */}
+                        <g transform={`rotate(${tail * 360 / queueSize - 90}, 200, 200)`}>
+                            <line x1="200" y1="200" x2="200" y2="320" stroke="#3b82f6" strokeWidth="3" strokeDasharray="5,5"/>
+                        </g>
+                        
+                        {/* Legend */}
+                        <g transform="translate(20, 350)">
+                            <circle cx="10" cy="0" r="8" fill="#ef4444"/>
+                            <text x="25" y="5" fill="#94a3b8" fontSize="11">Head (Consumer reads)</text>
+                            <circle cx="200" cy="0" r="8" fill="#3b82f6"/>
+                            <text x="215" y="5" fill="#94a3b8" fontSize="11">Tail (Producer writes)</text>
+                        </g>
+                    </svg>
+                    
+                    <div style={{textAlign: 'center', marginTop: '1rem'}}>
+                        <span style={{color: '#94a3b8'}}>Head: {head} | Tail: {tail} | Used: {(tail - head + queueSize) % queueSize}/{queueSize - 1}</span>
+                    </div>
+                    <div className="diagram-caption">
+                        Producer adds at tail, consumer removes from head. Queue wraps around when reaching the end.
+                    </div>
+                </div>
+            );
+        };
+
+        // NVMe Queue Pair Visualization
+        const NVMeQueuePair = () => {
+            const [step, setStep] = React.useState(0);
+            const [isPlaying, setIsPlaying] = React.useState(false);
+            
+            React.useEffect(() => {
+                if (isPlaying) {
+                    const interval = setInterval(() => {
+                        setStep(prev => (prev + 1) % 8);
+                    }, 1500);
+                    return () => clearInterval(interval);
+                }
+            }, [isPlaying]);
+            
+            const steps = [
+                { title: 'Idle State', desc: 'Queues empty, waiting for commands' },
+                { title: 'Build Command', desc: 'Host prepares 64-byte command in memory' },
+                { title: 'Write to SQ', desc: 'Command written to Submission Queue' },
+                { title: 'Ring Doorbell', desc: 'Host writes SQ Tail Doorbell' },
+                { title: 'Controller Fetches', desc: 'Controller DMAs command from SQ' },
+                { title: 'Execute & Transfer', desc: 'Controller performs data transfer' },
+                { title: 'Post Completion', desc: 'Controller writes to CQ with phase bit' },
+                { title: 'Process Complete', desc: 'Host detects completion, updates CQ Head' },
+            ];
+            
+            return (
+                <div className="diagram-container">
+                    <div className="diagram-title">NVMe Queue Pair Operation</div>
+                    <div style={{display: 'flex', justifyContent: 'center', gap: '1rem', marginBottom: '1rem'}}>
+                        <button onClick={() => setIsPlaying(!isPlaying)} style={{
+                            padding: '0.5rem 1.5rem', borderRadius: '0.5rem', border: 'none',
+                            background: isPlaying ? '#ef4444' : '#22c55e', color: 'white', cursor: 'pointer', fontWeight: '600'
+                        }}>
+                            {isPlaying ? '⏸ Pause' : '▶ Play'}
+                        </button>
+                        <button onClick={() => setStep((step + 1) % 8)} style={{
+                            padding: '0.5rem 1.5rem', borderRadius: '0.5rem', border: '1px solid #0ea5e9',
+                            background: 'transparent', color: '#7dd3fc', cursor: 'pointer'
+                        }}>
+                            Step →
+                        </button>
+                    </div>
+                    
+                    <svg viewBox="0 0 800 400" style={{width: '100%', maxWidth: '800px', margin: '0 auto', display: 'block'}}>
+                        {/* Host Side */}
+                        <rect x="50" y="50" width="300" height="300" fill="rgba(14, 165, 233, 0.1)" rx="12" stroke="#0ea5e9" strokeWidth="2"/>
+                        <text x="200" y="80" textAnchor="middle" fill="white" fontWeight="bold" fontSize="16">HOST (CPU/GPU)</text>
+                        
+                        {/* Submission Queue */}
+                        <rect x="70" y="100" width="260" height="80" fill="#1e293b" rx="8" stroke="#22c55e" strokeWidth="2"/>
+                        <text x="200" y="125" textAnchor="middle" fill="#22c55e" fontWeight="bold" fontSize="14">Submission Queue (SQ)</text>
+                        {[0,1,2,3,4,5,6,7].map(i => (
+                            <rect key={i} x={80 + i * 30} y="140" width="25" height="30" 
+                                  fill={step >= 2 && i === 0 ? '#22c55e' : '#0f172a'} rx="3" stroke="#334155"/>
+                        ))}
+                        <text x="200" y="185" textAnchor="middle" fill="#64748b" fontSize="10">64 bytes per entry</text>
+                        
+                        {/* Completion Queue */}
+                        <rect x="70" y="200" width="260" height="80" fill="#1e293b" rx="8" stroke="#a855f7" strokeWidth="2"/>
+                        <text x="200" y="225" textAnchor="middle" fill="#a855f7" fontWeight="bold" fontSize="14">Completion Queue (CQ)</text>
+                        {[0,1,2,3,4,5,6,7].map(i => (
+                            <rect key={i} x={80 + i * 30} y="240" width="25" height="30" 
+                                  fill={step >= 6 && i === 0 ? '#a855f7' : '#0f172a'} rx="3" stroke="#334155"/>
+                        ))}
+                        <text x="200" y="285" textAnchor="middle" fill="#64748b" fontSize="10">16 bytes per entry</text>
+                        
+                        {/* Doorbells */}
+                        <g transform="translate(70, 300)">
+                            <rect width="120" height="35" fill={step === 3 ? '#fbbf24' : '#1e293b'} rx="6" stroke="#fbbf24" strokeWidth="2"/>
+                            <text x="60" y="22" textAnchor="middle" fill="white" fontSize="11">SQ Tail DB</text>
+                        </g>
+                        <g transform="translate(210, 300)">
+                            <rect width="120" height="35" fill={step === 7 ? '#fbbf24' : '#1e293b'} rx="6" stroke="#fbbf24" strokeWidth="2"/>
+                            <text x="60" y="22" textAnchor="middle" fill="white" fontSize="11">CQ Head DB</text>
+                        </g>
+                        
+                        {/* Controller Side */}
+                        <rect x="450" y="50" width="300" height="300" fill="rgba(168, 85, 247, 0.1)" rx="12" stroke="#a855f7" strokeWidth="2"/>
+                        <text x="600" y="80" textAnchor="middle" fill="white" fontWeight="bold" fontSize="16">NVMe CONTROLLER</text>
+                        
+                        {/* Controller internals */}
+                        <rect x="470" y="100" width="260" height="60" fill="#1e293b" rx="8" stroke="#f59e0b"/>
+                        <text x="600" y="135" textAnchor="middle" fill="#f59e0b" fontSize="12">Command Fetch Engine</text>
+                        
+                        <rect x="470" y="180" width="260" height="60" fill="#1e293b" rx="8" stroke="#ef4444"/>
+                        <text x="600" y="215" textAnchor="middle" fill="#ef4444" fontSize="12">
+                            {step === 5 ? '⚡ Processing...' : 'Execution Engine'}
+                        </text>
+                        
+                        <rect x="470" y="260" width="260" height="60" fill="#1e293b" rx="8" stroke="#22c55e"/>
+                        <text x="600" y="295" textAnchor="middle" fill="#22c55e" fontSize="12">Completion Engine</text>
+                        
+                        {/* Arrows for data flow */}
+                        {step >= 3 && step < 5 && (
+                            <g>
+                                <path d="M 330 140 Q 400 100 450 130" stroke="#22c55e" strokeWidth="3" fill="none" 
+                                      strokeDasharray="10,5" style={{animation: 'flow 1s linear infinite'}}/>
+                                <text x="390" y="90" fill="#22c55e" fontSize="10">DMA Fetch</text>
+                            </g>
+                        )}
+                        {step >= 6 && (
+                            <g>
+                                <path d="M 450 280 Q 400 320 330 260" stroke="#a855f7" strokeWidth="3" fill="none"
+                                      strokeDasharray="10,5" style={{animation: 'flow 1s linear infinite'}}/>
+                                <text x="380" y="320" fill="#a855f7" fontSize="10">DMA Complete</text>
+                            </g>
+                        )}
+                        
+                        {/* Step indicator */}
+                        <rect x="250" y="370" width="300" height="25" fill="rgba(14, 165, 233, 0.3)" rx="6"/>
+                        <text x="400" y="387" textAnchor="middle" fill="white" fontWeight="bold" fontSize="12">
+                            Step {step + 1}: {steps[step].title}
+                        </text>
+                    </svg>
+                    
+                    <div style={{textAlign: 'center', marginTop: '1rem', padding: '1rem', background: 'rgba(14, 165, 233, 0.1)', borderRadius: '0.5rem'}}>
+                        <span style={{color: '#7dd3fc'}}>{steps[step].desc}</span>
+                    </div>
+                </div>
+            );
+        };
+
+        // Phase Bit Demo
+        const PhaseBitDemo = () => {
+            const [queueState, setQueueState] = React.useState({
+                entries: [0, 0, 0, 0, 0, 0, 0, 0],
+                phases: [0, 0, 0, 0, 0, 0, 0, 0],
+                expectedPhase: 1,
+                head: 0,
+                tail: 0
+            });
+            
+            const addCompletion = () => {
+                setQueueState(prev => {
+                    const newEntries = [...prev.entries];
+                    const newPhases = [...prev.phases];
+                    newEntries[prev.tail] = 1;
+                    newPhases[prev.tail] = prev.expectedPhase;
+                    const newTail = (prev.tail + 1) % 8;
+                    const newExpectedPhase = newTail === 0 ? (prev.expectedPhase === 1 ? 0 : 1) : prev.expectedPhase;
+                    return {
+                        ...prev,
+                        entries: newEntries,
+                        phases: newPhases,
+                        tail: newTail,
+                        expectedPhase: newExpectedPhase
+                    };
+                });
+            };
+            
+            const consumeCompletion = () => {
+                setQueueState(prev => {
+                    if (prev.head === prev.tail) return prev;
+                    const newEntries = [...prev.entries];
+                    newEntries[prev.head] = 0;
+                    return {
+                        ...prev,
+                        entries: newEntries,
+                        head: (prev.head + 1) % 8
+                    };
+                });
+            };
+            
+            return (
+                <div className="diagram-container">
+                    <div className="diagram-title">NVMe Completion Queue Phase Bit Mechanism</div>
+                    <div style={{display: 'flex', justifyContent: 'center', gap: '1rem', marginBottom: '1.5rem'}}>
+                        <button onClick={addCompletion} style={{
+                            padding: '0.75rem 1.5rem', borderRadius: '0.5rem', border: 'none',
+                            background: '#a855f7', color: 'white', cursor: 'pointer', fontWeight: '600'
+                        }}>
+                            Controller Posts Completion
+                        </button>
+                        <button onClick={consumeCompletion} style={{
+                            padding: '0.75rem 1.5rem', borderRadius: '0.5rem', border: 'none',
+                            background: '#0ea5e9', color: 'white', cursor: 'pointer', fontWeight: '600'
+                        }}>
+                            Host Consumes Completion
+                        </button>
+                    </div>
+                    
+                    <svg viewBox="0 0 700 200" style={{width: '100%', maxWidth: '700px', margin: '0 auto', display: 'block'}}>
+                        {/* Queue entries */}
+                        {queueState.entries.map((entry, i) => (
+                            <g key={i} transform={`translate(${50 + i * 80}, 50)`}>
+                                <rect width="70" height="80" 
+                                      fill={entry ? '#a855f7' : '#1e293b'} rx="8" 
+                                      stroke={i === queueState.head ? '#22c55e' : i === queueState.tail ? '#f59e0b' : '#334155'}
+                                      strokeWidth={i === queueState.head || i === queueState.tail ? 3 : 1}/>
+                                <text x="35" y="30" textAnchor="middle" fill="white" fontSize="12">Entry {i}</text>
+                                <text x="35" y="55" textAnchor="middle" fill={entry ? '#fbbf24' : '#64748b'} fontSize="14" fontWeight="bold">
+                                    P={queueState.phases[i]}
+                                </text>
+                                {i === queueState.head && (
+                                    <text x="35" y="-5" textAnchor="middle" fill="#22c55e" fontSize="10">▼ HEAD</text>
+                                )}
+                                {i === queueState.tail && (
+                                    <text x="35" y="100" textAnchor="middle" fill="#f59e0b" fontSize="10">▲ TAIL</text>
+                                )}
+                            </g>
+                        ))}
+                        
+                        {/* Expected phase indicator */}
+                        <rect x="50" y="160" width="600" height="30" fill="rgba(168, 85, 247, 0.2)" rx="6"/>
+                        <text x="350" y="180" textAnchor="middle" fill="white" fontSize="12">
+                            Host expects phase bit = <tspan fill="#fbbf24" fontWeight="bold">{queueState.expectedPhase}</tspan> for new completions
+                            {queueState.tail === 0 && ' (flipped at wrap!)'}
+                        </text>
+                    </svg>
+                    
+                    <div className="diagram-caption">
+                        The phase bit flips each time the queue wraps around. Host polls for entries where the phase bit matches expected value.
+                    </div>
+                </div>
+            );
+        };
+
+        // Doorbell Visualization
+        const DoorbellVisualization = () => {
+            const [writeCount, setWriteCount] = React.useState(0);
+            
+            return (
+                <div className="diagram-container">
+                    <div className="diagram-title">NVMe Doorbell Register Architecture</div>
+                    <svg viewBox="0 0 800 350" style={{width: '100%', maxWidth: '800px', margin: '0 auto', display: 'block'}}>
+                        {/* BAR0 representation */}
+                        <rect x="100" y="30" width="600" height="300" fill="#0f172a" rx="12" stroke="#0ea5e9" strokeWidth="2"/>
+                        <text x="400" y="60" textAnchor="middle" fill="white" fontWeight="bold" fontSize="16">NVMe Controller BAR0 (Memory Mapped)</text>
+                        
+                        {/* Controller registers */}
+                        <g transform="translate(120, 80)">
+                            <rect width="200" height="40" fill="#1e293b" rx="6" stroke="#64748b"/>
+                            <text x="100" y="25" textAnchor="middle" fill="#94a3b8" fontSize="11">CAP (0x00) - Capabilities</text>
+                        </g>
+                        <g transform="translate(340, 80)">
+                            <rect width="200" height="40" fill="#1e293b" rx="6" stroke="#64748b"/>
+                            <text x="100" y="25" textAnchor="middle" fill="#94a3b8" fontSize="11">CC (0x14) - Config</text>
+                        </g>
+                        <g transform="translate(560, 80)">
+                            <rect width="120" height="40" fill="#1e293b" rx="6" stroke="#64748b"/>
+                            <text x="60" y="25" textAnchor="middle" fill="#94a3b8" fontSize="11">...</text>
+                        </g>
+                        
+                        {/* Doorbell region header */}
+                        <text x="400" y="150" textAnchor="middle" fill="#fbbf24" fontWeight="bold" fontSize="14">
+                            Doorbell Registers (starting at 0x1000)
+                        </text>
+                        
+                        {/* Doorbell registers */}
+                        {[0, 1, 2, 3].map(qid => (
+                            <g key={qid} transform={`translate(${140 + qid * 140}, 165)`}>
+                                <rect width="120" height="100" fill="rgba(251, 191, 36, 0.1)" rx="8" stroke="#fbbf24" strokeDasharray="5,3"/>
+                                <text x="60" y="20" textAnchor="middle" fill="white" fontSize="11" fontWeight="bold">Queue {qid}</text>
+                                
+                                <rect x="10" y="30" width="100" height="28" fill="#22c55e" rx="4" 
+                                      style={{cursor: 'pointer'}}
+                                      onClick={() => setWriteCount(prev => prev + 1)}/>
+                                <text x="60" y="48" textAnchor="middle" fill="white" fontSize="10">SQ{qid} Tail DB</text>
+                                
+                                <rect x="10" y="65" width="100" height="28" fill="#a855f7" rx="4"/>
+                                <text x="60" y="83" textAnchor="middle" fill="white" fontSize="10">CQ{qid} Head DB</text>
+                            </g>
+                        ))}
+                        
+                        {/* Write indicator */}
+                        <text x="400" y="300" textAnchor="middle" fill="#64748b" fontSize="11">
+                            Click a doorbell to simulate a write | Total writes: {writeCount}
+                        </text>
+                        
+                        {/* Address labels */}
+                        <text x="200" y="290" textAnchor="middle" fill="#64748b" fontSize="9">0x1000</text>
+                        <text x="340" y="290" textAnchor="middle" fill="#64748b" fontSize="9">0x1008</text>
+                        <text x="480" y="290" textAnchor="middle" fill="#64748b" fontSize="9">0x1010</text>
+                        <text x="620" y="290" textAnchor="middle" fill="#64748b" fontSize="9">0x1018</text>
+                    </svg>
+                </div>
+            );
+        };
+
+        // Doorbell Bottleneck Visualization
+        const DoorbellBottleneck = () => {
+            const [activeThreads, setActiveThreads] = React.useState([]);
+            const [isRunning, setIsRunning] = React.useState(false);
+            const [completedWrites, setCompletedWrites] = React.useState(0);
+            
+            React.useEffect(() => {
+                if (isRunning) {
+                    const interval = setInterval(() => {
+                        setActiveThreads(prev => {
+                            if (prev.length === 0) {
+                                return [0];
+                            }
+                            const next = (prev[0] + 1) % 32;
+                            setCompletedWrites(c => c + 1);
+                            return [next];
+                        });
+                    }, 100);
+                    return () => clearInterval(interval);
+                }
+            }, [isRunning]);
+            
+            return (
+                <div className="diagram-container">
+                    <div className="diagram-title">Doorbell Write Serialization Problem</div>
+                    <div style={{display: 'flex', justifyContent: 'center', gap: '1rem', marginBottom: '1rem'}}>
+                        <button onClick={() => {setIsRunning(!isRunning); setCompletedWrites(0);}} style={{
+                            padding: '0.5rem 1.5rem', borderRadius: '0.5rem', border: 'none',
+                            background: isRunning ? '#ef4444' : '#22c55e', color: 'white', cursor: 'pointer', fontWeight: '600'
+                        }}>
+                            {isRunning ? '⏸ Stop' : '▶ Simulate 32 Threads'}
+                        </button>
+                    </div>
+                    
+                    <svg viewBox="0 0 800 300" style={{width: '100%', maxWidth: '800px', margin: '0 auto', display: 'block'}}>
+                        {/* Thread visualization */}
+                        <text x="400" y="25" textAnchor="middle" fill="white" fontWeight="bold">32 GPU Threads Trying to Write Doorbell</text>
+                        <g transform="translate(50, 40)">
+                            {[...Array(32)].map((_, i) => (
+                                <rect key={i} x={(i % 16) * 44} y={Math.floor(i / 16) * 50} 
+                                      width="40" height="40"
+                                      fill={activeThreads.includes(i) ? '#22c55e' : '#334155'}
+                                      rx="4" stroke={activeThreads.includes(i) ? '#fbbf24' : '#475569'} strokeWidth="2"/>
+                            ))}
+                            {[...Array(32)].map((_, i) => (
+                                <text key={i} x={(i % 16) * 44 + 20} y={Math.floor(i / 16) * 50 + 25}
+                                      textAnchor="middle" fill="white" fontSize="10">T{i}</text>
+                            ))}
+                        </g>
+                        
+                        {/* Funnel */}
+                        <path d="M 360 150 L 440 150 L 420 200 L 380 200 Z" fill="#fbbf24" stroke="#f59e0b" strokeWidth="2"/>
+                        <text x="400" y="175" textAnchor="middle" fill="#0f172a" fontSize="10" fontWeight="bold">SERIALIZE</text>
+                        
+                        {/* Single doorbell */}
+                        <rect x="370" y="210" width="60" height="40" fill="#ef4444" rx="6"/>
+                        <text x="400" y="235" textAnchor="middle" fill="white" fontSize="11" fontWeight="bold">DB</text>
+                        
+                        {/* Stats */}
+                        <text x="400" y="280" textAnchor="middle" fill="#94a3b8" fontSize="12">
+                            Completed: {completedWrites} | Only 1 thread can write at a time!
+                        </text>
+                        
+                        {/* Timeline comparison */}
+                        <g transform="translate(550, 60)">
+                            <text fill="white" fontSize="12" fontWeight="bold">Time to complete:</text>
+                            <text y="25" fill="#22c55e" fontSize="11">Ideal (parallel): 1 cycle</text>
+                            <rect x="150" y="15" width="50" height="15" fill="#22c55e" rx="3"/>
+                            
+                            <text y="50" fill="#ef4444" fontSize="11">Actual (serial): 32 cycles</text>
+                            <rect x="150" y="40" width="200" height="15" fill="#ef4444" rx="3"/>
+                            
+                            <text y="80" fill="#fbbf24" fontSize="11" fontWeight="bold">32x slowdown!</text>
+                        </g>
+                    </svg>
+                    <div className="diagram-caption">
+                        All threads wanting to write to the same doorbell must serialize, destroying GPU parallelism
+                    </div>
+                </div>
+            );
+        };
+
+        // RDMA Queue Comparison
+        const RDMAQueueComparison = () => {
+            return (
+                <div className="diagram-container">
+                    <div className="diagram-title">NVMe vs RDMA Queue Architecture</div>
+                    <svg viewBox="0 0 800 400" style={{width: '100%', maxWidth: '800px', margin: '0 auto', display: 'block'}}>
+                        {/* NVMe Side */}
+                        <g transform="translate(50, 30)">
+                            <rect width="320" height="340" fill="rgba(14, 165, 233, 0.1)" rx="12" stroke="#0ea5e9" strokeWidth="2"/>
+                            <text x="160" y="30" textAnchor="middle" fill="#0ea5e9" fontWeight="bold" fontSize="16">NVMe</text>
+                            
+                            <rect x="20" y="50" width="280" height="60" fill="#1e293b" rx="8" stroke="#22c55e"/>
+                            <text x="160" y="85" textAnchor="middle" fill="#22c55e" fontSize="12">Submission Queue (SQ)</text>
+                            
+                            <rect x="20" y="130" width="280" height="60" fill="#1e293b" rx="8" stroke="#a855f7"/>
+                            <text x="160" y="165" textAnchor="middle" fill="#a855f7" fontSize="12">Completion Queue (CQ)</text>
+                            
+                            <rect x="20" y="210" width="130" height="40" fill="#fbbf24" rx="6"/>
+                            <text x="85" y="235" textAnchor="middle" fill="#0f172a" fontSize="10" fontWeight="bold">SQ Tail DB</text>
+                            
+                            <rect x="170" y="210" width="130" height="40" fill="#fbbf24" rx="6"/>
+                            <text x="235" y="235" textAnchor="middle" fill="#0f172a" fontSize="10" fontWeight="bold">CQ Head DB</text>
+                            
+                            <text x="160" y="280" textAnchor="middle" fill="#64748b" fontSize="10">• 1 SQ + 1 CQ per queue pair</text>
+                            <text x="160" y="300" textAnchor="middle" fill="#64748b" fontSize="10">• 64B commands, 16B completions</text>
+                            <text x="160" y="320" textAnchor="middle" fill="#64748b" fontSize="10">• Simple MMIO doorbells</text>
+                        </g>
+                        
+                        {/* RDMA Side */}
+                        <g transform="translate(430, 30)">
+                            <rect width="320" height="340" fill="rgba(168, 85, 247, 0.1)" rx="12" stroke="#a855f7" strokeWidth="2"/>
+                            <text x="160" y="30" textAnchor="middle" fill="#a855f7" fontWeight="bold" fontSize="16">RDMA</text>
+                            
+                            <rect x="20" y="50" width="130" height="60" fill="#1e293b" rx="8" stroke="#22c55e"/>
+                            <text x="85" y="85" textAnchor="middle" fill="#22c55e" fontSize="11">Send Queue</text>
+                            
+                            <rect x="170" y="50" width="130" height="60" fill="#1e293b" rx="8" stroke="#3b82f6"/>
+                            <text x="235" y="85" textAnchor="middle" fill="#3b82f6" fontSize="11">Recv Queue</text>
+                            
+                            <rect x="20" y="130" width="280" height="60" fill="#1e293b" rx="8" stroke="#a855f7"/>
+                            <text x="160" y="165" textAnchor="middle" fill="#a855f7" fontSize="12">Completion Queue (CQ)</text>
+                            
+                            <rect x="20" y="210" width="280" height="40" fill="linear-gradient(90deg, #fbbf24, #f59e0b)" rx="6"/>
+                            <text x="160" y="235" textAnchor="middle" fill="#0f172a" fontSize="10" fontWeight="bold">BlueFlame / UAR (doorbell + data)</text>
+                            
+                            <text x="160" y="280" textAnchor="middle" fill="#64748b" fontSize="10">• SQ + RQ + shared CQ</text>
+                            <text x="160" y="300" textAnchor="middle" fill="#64748b" fontSize="10">• Variable WQE sizes</text>
+                            <text x="160" y="320" textAnchor="middle" fill="#64748b" fontSize="10">• Optimized doorbell with data</text>
+                        </g>
+                        
+                        {/* VS */}
+                        <circle cx="400" cy="200" r="25" fill="#1e293b" stroke="#64748b" strokeWidth="2"/>
+                        <text x="400" y="205" textAnchor="middle" fill="white" fontWeight="bold" fontSize="14">VS</text>
+                    </svg>
+                </div>
+            );
+        };
+
+        // Complete I/O Flow
+        const CompleteIOFlow = () => {
+            const [currentStep, setCurrentStep] = React.useState(0);
+            const [isPlaying, setIsPlaying] = React.useState(false);
+            
+            const steps = [
+                { label: '1. Prepare', x: 80, y: 100, color: '#3b82f6' },
+                { label: '2. Write SQ', x: 180, y: 100, color: '#22c55e' },
+                { label: '3. Ring DB', x: 280, y: 100, color: '#fbbf24' },
+                { label: '4. Fetch Cmd', x: 380, y: 100, color: '#f59e0b' },
+                { label: '5. Execute', x: 480, y: 100, color: '#ef4444' },
+                { label: '6. DMA Data', x: 480, y: 200, color: '#ec4899' },
+                { label: '7. Post CQ', x: 380, y: 200, color: '#a855f7' },
+                { label: '8. Poll/Int', x: 280, y: 200, color: '#8b5cf6' },
+                { label: '9. Update HD', x: 180, y: 200, color: '#6366f1' },
+                { label: '10. Done', x: 80, y: 200, color: '#22c55e' },
+            ];
+            
+            React.useEffect(() => {
+                if (isPlaying) {
+                    const interval = setInterval(() => {
+                        setCurrentStep(prev => (prev + 1) % steps.length);
+                    }, 800);
+                    return () => clearInterval(interval);
+                }
+            }, [isPlaying]);
+            
+            return (
+                <div className="diagram-container">
+                    <div className="diagram-title">Complete NVMe I/O Flow</div>
+                    <div style={{display: 'flex', justifyContent: 'center', gap: '1rem', marginBottom: '1rem'}}>
+                        <button onClick={() => setIsPlaying(!isPlaying)} style={{
+                            padding: '0.5rem 1.5rem', borderRadius: '0.5rem', border: 'none',
+                            background: isPlaying ? '#ef4444' : '#22c55e', color: 'white', cursor: 'pointer', fontWeight: '600'
+                        }}>
+                            {isPlaying ? '⏸ Pause' : '▶ Animate Flow'}
+                        </button>
+                    </div>
+                    
+                    <svg viewBox="0 0 600 300" style={{width: '100%', maxWidth: '600px', margin: '0 auto', display: 'block'}}>
+                        {/* Steps */}
+                        {steps.map((step, i) => (
+                            <g key={i}>
+                                <circle cx={step.x} cy={step.y} r="30" 
+                                        fill={i <= currentStep ? step.color : '#1e293b'}
+                                        stroke={step.color} strokeWidth="2"/>
+                                <text x={step.x} y={step.y + 5} textAnchor="middle" fill="white" fontSize="9" fontWeight="bold">
+                                    {step.label.split(' ')[0]}
+                                </text>
+                                <text x={step.x} y={step.y + 50} textAnchor="middle" fill="#94a3b8" fontSize="8">
+                                    {step.label.split(' ').slice(1).join(' ')}
+                                </text>
+                                
+                                {/* Connecting lines */}
+                                {i < steps.length - 1 && i !== 4 && i !== 9 && (
+                                    <line x1={step.x + 30} y1={step.y} x2={steps[i+1].x - 30} y2={steps[i+1].y}
+                                          stroke={i < currentStep ? '#22c55e' : '#334155'} strokeWidth="2"/>
+                                )}
+                            </g>
+                        ))}
+                        
+                        {/* Vertical connectors */}
+                        <line x1="480" y1="130" x2="480" y2="170" stroke={currentStep >= 5 ? '#22c55e' : '#334155'} strokeWidth="2"/>
+                        <line x1="80" y1="130" x2="80" y2="170" stroke={currentStep >= 9 ? '#22c55e' : '#334155'} strokeWidth="2"/>
+                        
+                        {/* Labels */}
+                        <text x="280" y="70" textAnchor="middle" fill="#0ea5e9" fontSize="12" fontWeight="bold">HOST</text>
+                        <text x="480" y="70" textAnchor="middle" fill="#a855f7" fontSize="12" fontWeight="bold">CONTROLLER</text>
+                        
+                        {/* Current step highlight */}
+                        <text x="300" y="280" textAnchor="middle" fill="white" fontSize="12">
+                            Current: <tspan fill={steps[currentStep].color} fontWeight="bold">{steps[currentStep].label}</tspan>
+                        </text>
+                    </svg>
+                </div>
+            );
+        };
+
+        // Multi-Queue Demo
+        const MultiQueueDemo = () => {
+            const [numQueues, setNumQueues] = React.useState(4);
+            
+            return (
+                <div className="diagram-container">
+                    <div className="diagram-title">Multi-Queue Scaling</div>
+                    <div style={{display: 'flex', justifyContent: 'center', gap: '1rem', marginBottom: '1rem'}}>
+                        <span style={{color: '#94a3b8', alignSelf: 'center'}}>Number of Queue Pairs:</span>
+                        <input type="range" min="1" max="8" value={numQueues} 
+                               onChange={(e) => setNumQueues(Number(e.target.value))}
+                               style={{width: '150px'}}/>
+                        <span style={{color: 'white', fontWeight: 'bold'}}>{numQueues}</span>
+                    </div>
+                    
+                    <svg viewBox="0 0 800 300" style={{width: '100%', maxWidth: '800px', margin: '0 auto', display: 'block'}}>
+                        {/* CPU/GPU cores */}
+                        <text x="100" y="30" textAnchor="middle" fill="white" fontSize="12" fontWeight="bold">Cores/Threads</text>
+                        {[...Array(numQueues)].map((_, i) => (
+                            <g key={i} transform={`translate(${50 + i * 90}, 40)`}>
+                                <rect width="80" height="40" fill="#3b82f6" rx="6"/>
+                                <text x="40" y="25" textAnchor="middle" fill="white" fontSize="10">Core {i}</text>
+                            </g>
+                        ))}
+                        
+                        {/* Connections */}
+                        {[...Array(numQueues)].map((_, i) => (
+                            <line key={i} x1={90 + i * 90} y1="80" x2={90 + i * 90} y2="120" 
+                                  stroke="#22c55e" strokeWidth="2"/>
+                        ))}
+                        
+                        {/* Queue pairs */}
+                        <text x="100" y="115" textAnchor="middle" fill="white" fontSize="12" fontWeight="bold">Queue Pairs</text>
+                        {[...Array(numQueues)].map((_, i) => (
+                            <g key={i} transform={`translate(${50 + i * 90}, 130)`}>
+                                <rect width="80" height="70" fill="#1e293b" rx="6" stroke="#22c55e"/>
+                                <text x="40" y="20" textAnchor="middle" fill="#22c55e" fontSize="9">SQ{i}</text>
+                                <text x="40" y="40" textAnchor="middle" fill="#a855f7" fontSize="9">CQ{i}</text>
+                                <text x="40" y="60" textAnchor="middle" fill="#fbbf24" fontSize="8">DB{i}</text>
+                            </g>
+                        ))}
+                        
+                        {/* NVMe Controller */}
+                        <rect x="50" y="220" width={numQueues * 90 - 10} height="50" fill="rgba(168, 85, 247, 0.2)" rx="8" stroke="#a855f7"/>
+                        <text x={(numQueues * 90) / 2 + 45} y="250" textAnchor="middle" fill="#a855f7" fontSize="12" fontWeight="bold">NVMe Controller</text>
+                        
+                        {/* Stats */}
+                        <g transform="translate(550, 50)">
+                            <text fill="white" fontSize="11">Parallel I/O Paths: <tspan fill="#22c55e" fontWeight="bold">{numQueues}</tspan></text>
+                            <text y="25" fill="white" fontSize="11">Doorbells: <tspan fill="#fbbf24" fontWeight="bold">{numQueues * 2}</tspan></text>
+                            <text y="50" fill="white" fontSize="11">Max for 200K threads:</text>
+                            <text y="70" fill="#ef4444" fontSize="11" fontWeight="bold">~65,535 QPs (still not enough!)</text>
+                        </g>
+                    </svg>
+                </div>
+            );
+        };
+
+        // Render all components
+        ReactDOM.render(<CircularQueueIntro />, document.getElementById('circular-queue-intro'));
+        ReactDOM.render(<NVMeQueuePair />, document.getElementById('nvme-queue-pair'));
+        ReactDOM.render(<PhaseBitDemo />, document.getElementById('phase-bit-demo'));
+        ReactDOM.render(<DoorbellVisualization />, document.getElementById('doorbell-visualization'));
+        ReactDOM.render(<DoorbellBottleneck />, document.getElementById('doorbell-bottleneck'));
+        ReactDOM.render(<RDMAQueueComparison />, document.getElementById('rdma-queue-comparison'));
+        ReactDOM.render(<CompleteIOFlow />, document.getElementById('complete-io-flow'));
+        ReactDOM.render(<MultiQueueDemo />, document.getElementById('multi-queue-demo'));
+    </script>
+</body>
+</html>

@@ -1,0 +1,2258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chapter 1: GPU Threading & Memory Model Deep Dive</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --secondary: #10b981;
+            --accent: #f59e0b;
+            --danger: #ef4444;
+            --dark: #1e293b;
+            --light: #f8fafc;
+            --gray: #64748b;
+            --gpu-green: #22c55e;
+            --warp-yellow: #eab308;
+            --thread-blue: #3b82f6;
+            --memory-purple: #a855f7;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            line-height: 1.7;
+            color: var(--dark);
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        header {
+            text-align: center;
+            padding: 4rem 2rem;
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.2) 0%, rgba(139, 92, 246, 0.2) 100%);
+            border-radius: 2rem;
+            margin-bottom: 3rem;
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            backdrop-filter: blur(10px);
+        }
+
+        header h1 {
+            font-size: 3rem;
+            color: white;
+            margin-bottom: 1rem;
+            text-shadow: 0 0 40px rgba(99, 102, 241, 0.5);
+        }
+
+        header .subtitle {
+            font-size: 1.3rem;
+            color: #94a3b8;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .chapter-badge {
+            display: inline-block;
+            background: var(--primary);
+            color: white;
+            padding: 0.5rem 1.5rem;
+            border-radius: 2rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        .section {
+            background: rgba(30, 41, 59, 0.8);
+            border-radius: 1.5rem;
+            padding: 2.5rem;
+            margin-bottom: 2rem;
+            border: 1px solid rgba(99, 102, 241, 0.2);
+            backdrop-filter: blur(10px);
+        }
+
+        .section-header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .section-number {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--memory-purple) 100%);
+            color: white;
+            width: 60px;
+            height: 60px;
+            border-radius: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 1.5rem;
+            box-shadow: 0 0 30px rgba(99, 102, 241, 0.4);
+        }
+
+        h2 {
+            color: white;
+            font-size: 1.8rem;
+        }
+
+        h3 {
+            color: #c4b5fd;
+            font-size: 1.4rem;
+            margin: 2rem 0 1rem;
+        }
+
+        h4 {
+            color: #a5b4fc;
+            font-size: 1.1rem;
+            margin: 1.5rem 0 0.75rem;
+        }
+
+        p {
+            color: #cbd5e1;
+            margin-bottom: 1rem;
+        }
+
+        .highlight {
+            color: #fbbf24;
+            font-weight: 600;
+        }
+
+        .key-term {
+            color: #a78bfa;
+            font-weight: 600;
+        }
+
+        .diagram-container {
+            background: linear-gradient(135deg, rgba(15, 23, 42, 0.9) 0%, rgba(30, 41, 59, 0.9) 100%);
+            border-radius: 1rem;
+            padding: 2rem;
+            margin: 2rem 0;
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            overflow: hidden;
+        }
+
+        .diagram-title {
+            text-align: center;
+            color: white;
+            font-weight: 600;
+            margin-bottom: 1.5rem;
+            font-size: 1.2rem;
+        }
+
+        .diagram-caption {
+            text-align: center;
+            color: #94a3b8;
+            font-size: 0.9rem;
+            margin-top: 1rem;
+            font-style: italic;
+        }
+
+        .code-block {
+            background: #0f172a;
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+            overflow-x: auto;
+            border: 1px solid #334155;
+        }
+
+        .code-block code {
+            color: #e2e8f0;
+            font-family: 'Fira Code', 'Consolas', monospace;
+            font-size: 0.9rem;
+            line-height: 1.6;
+        }
+
+        .keyword { color: #c084fc; }
+        .type { color: #22d3ee; }
+        .function { color: #fbbf24; }
+        .comment { color: #64748b; }
+        .number { color: #4ade80; }
+        .string { color: #fb923c; }
+
+        .info-box {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.2) 0%, rgba(99, 102, 241, 0.2) 100%);
+            border-left: 4px solid var(--thread-blue);
+            border-radius: 0 0.75rem 0.75rem 0;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+        }
+
+        .warning-box {
+            background: linear-gradient(135deg, rgba(245, 158, 11, 0.2) 0%, rgba(234, 179, 8, 0.2) 100%);
+            border-left: 4px solid var(--accent);
+            border-radius: 0 0.75rem 0.75rem 0;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+        }
+
+        .danger-box {
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(220, 38, 38, 0.2) 100%);
+            border-left: 4px solid var(--danger);
+            border-radius: 0 0.75rem 0.75rem 0;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+        }
+
+        .slide-figure {
+            background: rgba(15, 23, 42, 0.8);
+            border-radius: 1rem;
+            padding: 1.5rem;
+            margin: 2rem 0;
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        .slide-image {
+            width: 100%;
+            max-width: 100%;
+            border-radius: 0.5rem;
+            display: block;
+            margin: 0 auto;
+        }
+
+        .slide-figure figcaption {
+            color: #94a3b8;
+            font-size: 0.9rem;
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid rgba(100, 116, 139, 0.3);
+            line-height: 1.6;
+        }
+
+        .slide-figure figcaption strong {
+            color: #c4b5fd;
+        }
+
+        .box-title {
+            color: white;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin: 2rem 0;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            padding: 1.5rem;
+            border-radius: 1rem;
+            text-align: center;
+            box-shadow: 0 10px 40px rgba(99, 102, 241, 0.3);
+        }
+
+        .stat-card.green {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            box-shadow: 0 10px 40px rgba(16, 185, 129, 0.3);
+        }
+
+        .stat-card.yellow {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            box-shadow: 0 10px 40px rgba(245, 158, 11, 0.3);
+        }
+
+        .stat-card.purple {
+            background: linear-gradient(135deg, #a855f7 0%, #9333ea 100%);
+            box-shadow: 0 10px 40px rgba(168, 85, 247, 0.3);
+        }
+
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: bold;
+            color: white;
+        }
+
+        .stat-label {
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 0.9rem;
+            margin-top: 0.5rem;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1.5rem 0;
+        }
+
+        th, td {
+            padding: 1rem;
+            text-align: left;
+            border-bottom: 1px solid #334155;
+        }
+
+        th {
+            background: rgba(99, 102, 241, 0.3);
+            color: white;
+            font-weight: 600;
+        }
+
+        td {
+            color: #cbd5e1;
+        }
+
+        tr:hover {
+            background: rgba(99, 102, 241, 0.1);
+        }
+
+        .nav-links {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 3rem;
+            padding-top: 2rem;
+            border-top: 1px solid #334155;
+        }
+
+        .nav-link {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 1rem 2rem;
+            background: rgba(99, 102, 241, 0.2);
+            color: white;
+            text-decoration: none;
+            border-radius: 0.75rem;
+            transition: all 0.3s ease;
+            border: 1px solid rgba(99, 102, 241, 0.3);
+        }
+
+        .nav-link:hover {
+            background: rgba(99, 102, 241, 0.4);
+            transform: translateY(-2px);
+        }
+
+        footer {
+            text-align: center;
+            padding: 3rem 2rem;
+            color: #64748b;
+        }
+
+        /* Animation classes */
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        @keyframes flow {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(10px); }
+        }
+
+        .animate-pulse {
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        .animate-flow {
+            animation: flow 1s ease-in-out infinite alternate;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="chapter-badge">📚 Chapter 1</div>
+            <h1>🎮 GPU Threading & Memory Model</h1>
+            <p class="subtitle">A comprehensive deep-dive into CUDA's parallel execution model, thread hierarchy, warp scheduling, and memory architecture with interactive visualizations</p>
+        </header>
+
+        <!-- Section 1.1: Introduction -->
+        <section class="section">
+            <div class="section-header">
+                <div class="section-number">1.1</div>
+                <h2>The GPU Computing Paradigm</h2>
+            </div>
+
+            <p>Graphics Processing Units (GPUs) represent a fundamentally different approach to computation compared to traditional CPUs. While CPUs are designed as <span class="key-term">latency-optimized</span> processors with sophisticated branch prediction, out-of-order execution, and deep caches, GPUs are <span class="key-term">throughput-optimized</span> processors designed to execute thousands of threads simultaneously.</p>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value">270K+</div>
+                    <div class="stat-label">Concurrent Threads (H200)</div>
+                </div>
+                <div class="stat-card green">
+                    <div class="stat-value">132</div>
+                    <div class="stat-label">Streaming Multiprocessors</div>
+                </div>
+                <div class="stat-card yellow">
+                    <div class="stat-value">32</div>
+                    <div class="stat-label">Threads per Warp</div>
+                </div>
+                <div class="stat-card purple">
+                    <div class="stat-value">2048</div>
+                    <div class="stat-label">Max Threads per SM</div>
+                </div>
+            </div>
+
+            <div class="info-box">
+                <div class="box-title">💡 Key Insight: SIMT Architecture</div>
+                <p>GPUs use <span class="highlight">Single Instruction, Multiple Thread (SIMT)</span> execution. Unlike SIMD where a single instruction operates on vector registers, SIMT allows multiple threads to execute the same instruction on different data, with each thread having its own registers and program counter.</p>
+            </div>
+
+            <h3>CPU vs GPU: Architectural Philosophy</h3>
+
+            <div id="cpu-gpu-comparison"></div>
+
+            <div id="cpu-gpu-detailed-table"></div>
+        </section>
+
+        <!-- Section 1.2: Thread Hierarchy -->
+        <section class="section">
+            <div class="section-header">
+                <div class="section-number">1.2</div>
+                <h2>CUDA Thread Hierarchy</h2>
+            </div>
+
+            <p>CUDA organizes parallel execution into a hierarchical structure that maps efficiently to GPU hardware. Understanding this hierarchy is essential for writing efficient GPU code.</p>
+
+            <div id="thread-hierarchy-interactive"></div>
+
+            <h3>1.2.1 Threads: The Atomic Unit</h3>
+
+            <p>A <span class="key-term">thread</span> is the smallest unit of execution in CUDA. Each thread:</p>
+            <ul style="color: #cbd5e1; margin-left: 2rem; margin-bottom: 1rem;">
+                <li>Executes the same kernel program (SPMD model)</li>
+                <li>Has a unique identifier within its block (<code style="color: #fbbf24;">threadIdx.x, threadIdx.y, threadIdx.z</code>)</li>
+                <li>Owns private registers for local variables</li>
+                <li>Can access shared memory within its block</li>
+                <li>Can access global memory</li>
+            </ul>
+
+            <div class="code-block">
+<code><span class="comment">// Each thread calculates its unique global index</span>
+<span class="keyword">__global__</span> <span class="type">void</span> <span class="function">vectorAdd</span>(<span class="type">float</span>* A, <span class="type">float</span>* B, <span class="type">float</span>* C, <span class="type">int</span> N) {
+    <span class="comment">// Calculate global thread index</span>
+    <span class="type">int</span> i = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    <span class="comment">// Boundary check - not all threads may have valid work</span>
+    <span class="keyword">if</span> (i < N) {
+        C[i] = A[i] + B[i];  <span class="comment">// Each thread processes one element</span>
+    }
+}
+</code>
+            </div>
+
+            <h3>1.2.2 Thread Blocks: Cooperative Thread Groups</h3>
+
+            <p>A <span class="key-term">thread block</span> (or simply "block") is a group of threads that:</p>
+
+            <div id="thread-block-visualization"></div>
+
+            <div class="warning-box">
+                <div class="box-title">⚠️ Critical Constraint</div>
+                <p>Threads in <span class="highlight">different blocks cannot cooperate or synchronize</span>. This design enables blocks to execute in any order, on any available SM, providing scalability across different GPU configurations.</p>
+            </div>
+
+            <h3>1.2.3 Grids: Collections of Blocks</h3>
+
+            <p>A <span class="key-term">grid</span> is the collection of all thread blocks launched by a single kernel invocation. Grids can be 1D, 2D, or 3D, matching the dimensionality of the problem being solved.</p>
+
+            <div class="code-block">
+<code><span class="comment">// Launching a 2D grid for image processing</span>
+<span class="type">dim3</span> blockDim(<span class="number">16</span>, <span class="number">16</span>);  <span class="comment">// 256 threads per block</span>
+<span class="type">dim3</span> gridDim(
+    (<span class="function">width</span> + blockDim.x - <span class="number">1</span>) / blockDim.x,
+    (<span class="function">height</span> + blockDim.y - <span class="number">1</span>) / blockDim.y
+);
+
+<span class="function">imageKernel</span><<<gridDim, blockDim>>>(input, output, width, height);
+</code>
+            </div>
+        </section>
+
+        <!-- Section 1.3: Warps -->
+        <section class="section">
+            <div class="section-header">
+                <div class="section-number">1.3</div>
+                <h2>Warps: The Fundamental Execution Unit</h2>
+            </div>
+
+            <p>While threads and blocks are <span class="key-term">software abstractions</span>, the <span class="key-term">warp</span> is how the GPU hardware actually executes threads. A warp consists of <span class="highlight">32 consecutive threads</span> that execute in lockstep.</p>
+
+            <div id="warp-visualization"></div>
+
+            <h3>1.3.1 Warp Formation</h3>
+
+            <p>Warps are formed from threads based on their <span class="key-term">linearized thread index</span> within a block:</p>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Thread Indices</th>
+                        <th>Warp Number</th>
+                        <th>Description</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>0 - 31</td>
+                        <td>Warp 0</td>
+                        <td>First 32 threads</td>
+                    </tr>
+                    <tr>
+                        <td>32 - 63</td>
+                        <td>Warp 1</td>
+                        <td>Next 32 threads</td>
+                    </tr>
+                    <tr>
+                        <td>64 - 95</td>
+                        <td>Warp 2</td>
+                        <td>And so on...</td>
+                    </tr>
+                    <tr>
+                        <td>N*32 - (N+1)*32-1</td>
+                        <td>Warp N</td>
+                        <td>General pattern</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <div class="info-box">
+                <div class="box-title">💡 2D/3D Block Linearization</div>
+                <p>For 2D blocks, threads are linearized as: <code style="color: #fbbf24;">linearIdx = threadIdx.x + threadIdx.y * blockDim.x</code><br>
+                For 3D blocks: <code style="color: #fbbf24;">linearIdx = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y</code></p>
+            </div>
+
+            <h3>1.3.2 SIMT Execution Model</h3>
+
+            <div id="simt-architecture-slide"></div>
+
+            <div id="simt-execution-demo"></div>
+
+            <h3>1.3.3 Branch Divergence</h3>
+
+            <p>When threads in a warp take different execution paths due to conditional statements, <span class="key-term">branch divergence</span> occurs. The GPU must serialize the execution of divergent paths.</p>
+
+            <div id="branch-divergence-demo"></div>
+
+            <div class="danger-box">
+                <div class="box-title">🚨 Performance Impact</div>
+                <p>Branch divergence can reduce warp efficiency significantly. If only 1 thread in a warp takes a different path, the entire warp must execute both paths serially, potentially <span class="highlight">halving performance</span> for that code section.</p>
+            </div>
+        </section>
+
+        <!-- Section 1.4: Thread Scheduling -->
+        <section class="section">
+            <div class="section-header">
+                <div class="section-number">1.4</div>
+                <h2>Warp Scheduling & Latency Hiding</h2>
+            </div>
+
+            <p>GPUs hide memory latency through <span class="key-term">zero-overhead warp scheduling</span>. When a warp stalls waiting for memory, the scheduler immediately switches to another ready warp.</p>
+
+            <div id="warp-scheduling-slide"></div>
+
+            <div id="warp-scheduler-demo"></div>
+
+            <h3>1.4.1 Occupancy</h3>
+
+            <p><span class="key-term">Occupancy</span> is the ratio of active warps to the maximum possible warps per SM. Higher occupancy generally provides more opportunities for latency hiding.</p>
+
+            <div id="occupancy-calculator"></div>
+
+            <h3>1.4.2 Factors Limiting Occupancy</h3>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Resource</th>
+                        <th>Limit per SM</th>
+                        <th>Impact</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Threads</td>
+                        <td>2048 (varies)</td>
+                        <td>Max threads regardless of blocks</td>
+                    </tr>
+                    <tr>
+                        <td>Blocks</td>
+                        <td>32 (Maxwell+)</td>
+                        <td>Small blocks may hit this limit</td>
+                    </tr>
+                    <tr>
+                        <td>Registers</td>
+                        <td>65536 (256KB)</td>
+                        <td>High register usage reduces threads</td>
+                    </tr>
+                    <tr>
+                        <td>Shared Memory</td>
+                        <td>48-164KB (varies)</td>
+                        <td>Heavy shared mem usage limits blocks</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <!-- Section 1.5: Memory Model -->
+        <section class="section">
+            <div class="section-header">
+                <div class="section-number">1.5</div>
+                <h2>GPU Memory Hierarchy</h2>
+            </div>
+
+            <p>Understanding the GPU memory hierarchy is critical for performance. Different memory types have vastly different latencies, bandwidths, and access patterns.</p>
+
+            <div id="memory-hierarchy-interactive"></div>
+
+            <h3>1.5.1 Register Memory</h3>
+
+            <p><span class="key-term">Registers</span> are the fastest memory, private to each thread:</p>
+            <ul style="color: #cbd5e1; margin-left: 2rem; margin-bottom: 1rem;">
+                <li>Latency: <span class="highlight">~1 cycle</span></li>
+                <li>Bandwidth: Extremely high (no memory transaction)</li>
+                <li>Size: Up to 255 registers per thread</li>
+                <li>Scope: Private to thread, lifetime of thread</li>
+            </ul>
+
+            <h3>1.5.2 Shared Memory</h3>
+
+            <p><span class="key-term">Shared memory</span> is on-chip memory shared by all threads in a block:</p>
+
+            <div id="shared-memory-demo"></div>
+
+            <h3>1.5.3 Global Memory</h3>
+
+            <p><span class="key-term">Global memory</span> is the main GPU memory (HBM/GDDR), accessible by all threads:</p>
+
+            <div id="global-memory-access-demo"></div>
+
+            <h3>1.5.4 Memory Coalescing</h3>
+
+            <p><span class="key-term">Memory coalescing</span> is critical for global memory performance. When threads in a warp access consecutive memory addresses, the hardware can combine these into fewer memory transactions.</p>
+
+            <div id="coalescing-demo"></div>
+
+            <div class="info-box">
+                <div class="box-title">💡 Coalescing Rules</div>
+                <p>For optimal performance, thread N should access address <code style="color: #fbbf24;">base + N * sizeof(element)</code>. This allows the hardware to combine 32 thread accesses into a single 128-byte transaction.</p>
+            </div>
+
+            <h3>1.5.5 Constant Memory</h3>
+
+            <p><span class="key-term">Constant memory</span> is cached, read-only memory optimized for broadcast access:</p>
+            <ul style="color: #cbd5e1; margin-left: 2rem; margin-bottom: 1rem;">
+                <li>Size: 64KB total</li>
+                <li>Cached: Yes, 8KB cache per SM</li>
+                <li>Best for: Data where all threads read the same value</li>
+                <li>Declared with: <code style="color: #fbbf24;">__constant__</code></li>
+            </ul>
+
+            <div class="code-block">
+<code><span class="comment">// Declare constant memory for convolution mask</span>
+<span class="keyword">__constant__</span> <span class="type">float</span> mask[MASK_SIZE];
+
+<span class="comment">// Copy to constant memory from host</span>
+<span class="function">cudaMemcpyToSymbol</span>(mask, hostMask, MASK_SIZE * <span class="keyword">sizeof</span>(<span class="type">float</span>));
+</code>
+            </div>
+        </section>
+
+        <!-- Section 1.6: Putting It All Together -->
+        <section class="section">
+            <div class="section-header">
+                <div class="section-number">1.6</div>
+                <h2>Comprehensive Example: Matrix Multiplication</h2>
+            </div>
+
+            <p>Let's see how all these concepts come together in a real CUDA kernel for matrix multiplication.</p>
+
+            <div id="matrix-multiply-demo"></div>
+
+            <h3>Thread-to-Data Mapping</h3>
+
+            <div class="code-block">
+<code><span class="keyword">__global__</span> <span class="type">void</span> <span class="function">matrixMulKernel</span>(<span class="type">float</span>* M, <span class="type">float</span>* N, <span class="type">float</span>* P, <span class="type">int</span> Width) {
+    <span class="comment">// Calculate row and column for this thread</span>
+    <span class="type">int</span> Row = blockIdx.y * blockDim.y + threadIdx.y;
+    <span class="type">int</span> Col = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    <span class="keyword">if</span> (Row < Width && Col < Width) {
+        <span class="type">float</span> Pvalue = <span class="number">0.0f</span>;
+        
+        <span class="comment">// Each thread computes one element of P</span>
+        <span class="keyword">for</span> (<span class="type">int</span> k = <span class="number">0</span>; k < Width; ++k) {
+            Pvalue += M[Row * Width + k] * N[k * Width + Col];
+        }
+        
+        P[Row * Width + Col] = Pvalue;
+    }
+}
+</code>
+            </div>
+
+            <div class="warning-box">
+                <div class="box-title">⚠️ Memory Bandwidth Bottleneck</div>
+                <p>This naive implementation achieves only ~25 GFLOPS on hardware capable of 1000+ GFLOPS. The bottleneck is <span class="highlight">global memory bandwidth</span>. Each thread performs 2 global memory reads per multiply-add, requiring 4 bytes per FLOP when the hardware can only deliver 37.5 GFLOPS at 150 GB/s bandwidth.</p>
+            </div>
+        </section>
+
+        <!-- Navigation -->
+        <nav class="nav-links">
+            <a href="../index.html" class="nav-link">
+                ← Back to Index
+            </a>
+            <a href="../chapter2_queues/index.html" class="nav-link">
+                Chapter 2: NVMe & RDMA Queues →
+            </a>
+        </nav>
+    </div>
+
+    <footer>
+        <p>Chapter 1: GPU Threading & Memory Model | GPU-NVMe Documentation Series</p>
+        <p>Based on ECE408 Applied Parallel Programming, UIUC</p>
+    </footer>
+
+    <!-- React Components -->
+    <script type="text/babel">
+        // GPUs SIMT Architecture Slide (recreated from Industry Analysis)
+        const SIMTArchitectureSlide = () => {
+            const [highlightedPoint, setHighlightedPoint] = React.useState(null);
+            
+            const bulletPoints = [
+                {
+                    text: "GPUs execute groups of threads known as ",
+                    highlight: "warps/waves",
+                    suffix: " in ",
+                    emphasis: "SIMT (Single Instruction, Multiple Thread)",
+                    end: " fashion."
+                },
+                {
+                    text: "Many CUDA programs achieve high performance by taking advantage of warp execution"
+                },
+                {
+                    text: "In a SIMT architecture, rather than a single thread issuing vector instructions applied to data vectors, ",
+                    bold: "multiple threads issue common instructions to arbitrary data.",
+                    suffix: " These are all tied to a single ",
+                    emphasis: "Warp",
+                    end: "."
+                },
+                {
+                    text: "Today GPUs perform a warp of 32 parallel threads using SIMT. This allows each thread to access its own registers to load and store."
+                },
+                {
+                    text: "GPU code compilers and GPUs work together to ensure the threads of a warp execute the same instruction sequences together at max performance."
+                },
+                {
+                    text: "When these Warps are submitted to NVMe SSDs. They get scattered across several QPs to enable parallel execution and allow GPUs to operate on Next Warp."
+                }
+            ];
+            
+            return (
+                <div style={{background: 'linear-gradient(135deg, #fefce8 0%, #fef9c3 100%)', borderRadius: '1rem', padding: '1.5rem', marginBottom: '2rem', border: '3px solid #eab308', boxShadow: '0 4px 20px rgba(234, 179, 8, 0.2)'}}>
+                    {/* Yellow/orange accent bar on left */}
+                    <div style={{display: 'flex'}}>
+                        <div style={{width: '6px', background: 'linear-gradient(to bottom, #f59e0b, #eab308, #a855f7)', borderRadius: '3px', marginRight: '1.5rem'}}></div>
+                        
+                        <div style={{flex: 1}}>
+                            {/* Title */}
+                            <h3 style={{color: '#7c3aed', fontSize: '1.8rem', fontWeight: '400', marginTop: 0, marginBottom: '1.5rem', fontFamily: 'system-ui, -apple-system, sans-serif'}}>
+                                GPUs SIMT architecture
+                            </h3>
+                            
+                            {/* Bullet points */}
+                            <div style={{display: 'flex', flexDirection: 'column', gap: '1rem'}}>
+                                {bulletPoints.map((point, idx) => (
+                                    <div 
+                                        key={idx}
+                                        onMouseEnter={() => setHighlightedPoint(idx)}
+                                        onMouseLeave={() => setHighlightedPoint(null)}
+                                        style={{
+                                            display: 'flex',
+                                            alignItems: 'flex-start',
+                                            gap: '0.75rem',
+                                            padding: '0.5rem',
+                                            borderRadius: '0.5rem',
+                                            background: highlightedPoint === idx ? 'rgba(124, 58, 237, 0.1)' : 'transparent',
+                                            transition: 'background 0.2s'
+                                        }}
+                                    >
+                                        <span style={{color: '#7c3aed', fontSize: '1.2rem', fontWeight: 'bold', marginTop: '2px'}}>›</span>
+                                        <p style={{margin: 0, color: '#1f2937', fontSize: '1rem', lineHeight: '1.6'}}>
+                                            {point.text}
+                                            {point.highlight && <em style={{color: '#7c3aed', fontStyle: 'italic'}}>{point.highlight}</em>}
+                                            {point.suffix}
+                                            {point.emphasis && <strong style={{color: '#1f2937'}}>{point.emphasis}</strong>}
+                                            {point.bold && <strong style={{color: '#1f2937'}}>{point.bold}</strong>}
+                                            {point.end}
+                                        </p>
+                                    </div>
+                                ))}
+                            </div>
+                            
+                            {/* Black callout box */}
+                            <div style={{
+                                background: '#0f172a',
+                                borderRadius: '0.5rem',
+                                padding: '1rem 2rem',
+                                marginTop: '1.5rem',
+                                textAlign: 'center',
+                                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)'
+                            }}>
+                                <p style={{margin: 0, color: 'white', fontSize: '1.1rem', fontWeight: '500'}}>
+                                    NVMe QPs design needs to align better with GPU scheduling
+                                </p>
+                            </div>
+                            
+                            {/* Source */}
+                            <div style={{marginTop: '1rem', fontSize: '0.8rem', color: '#dc2626'}}>
+                                <a href="https://developer.nvidia.com/blog/using-cuda-warp-level-primitives/" style={{color: '#dc2626', textDecoration: 'underline'}}>
+                                    Using CUDA Warp-Level Primitives | NVIDIA Technical Blog
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // GPU Threads, Warps, SM Core & Pipelining Slide (recreated from ECE408/Industry)
+        const WarpSchedulingSlide = () => {
+            const [time, setTime] = React.useState(0);
+            const [isPlaying, setIsPlaying] = React.useState(true);
+            
+            React.useEffect(() => {
+                if (!isPlaying) return;
+                const interval = setInterval(() => {
+                    setTime(t => (t + 1) % 24);
+                }, 200);
+                return () => clearInterval(interval);
+            }, [isPlaying]);
+
+            // GPU warp timeline states: 0=processing, 1=waiting, 2=ready
+            const gpuTimeline = [
+                [0,0,0,0,0,0,1,1,1,1,0,0,0,0,1,1,1,0,0,0,1,1,0,0], // W1
+                [2,2,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,1,1,0,0,0,0], // W2
+                [2,2,2,2,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,1,1], // W3
+                [2,2,2,2,2,2,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0], // W4
+            ];
+            
+            // CPU timeline: alternating processing and context switch
+            const cpuTimeline = [0,0,0,0,3,0,0,0,0,3,0,0,0,0,3,0,0,0,0,3,0,0,0,0];
+            const cpuThread = [1,1,1,1,0,2,2,2,2,0,3,3,3,3,0,4,4,4,4,0,1,1,1,1];
+            
+            const colors = {
+                processing: '#4ade80',
+                waiting: 'white',
+                ready: '#86efac',
+                context: '#a16207'
+            };
+            
+            return (
+                <div style={{background: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)', borderRadius: '1rem', padding: '1.5rem', marginBottom: '2rem', border: '1px solid rgba(99, 102, 241, 0.3)'}}>
+                    <div style={{textAlign: 'center', color: '#a5b4fc', marginBottom: '1rem', fontSize: '1.2rem', fontWeight: 'bold'}}>
+                        GPU Threads, Warps, SM Core & Pipelining
+                    </div>
+                    
+                    <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem'}}>
+                        {/* Left side: Thread Block to Warps to Multiprocessor */}
+                        <div>
+                            <svg viewBox="0 0 400 220" style={{width: '100%'}}>
+                                {/* Thread Block */}
+                                <g transform="translate(10, 30)">
+                                    <rect width="80" height="100" fill="#1e293b" stroke="#22c55e" strokeWidth="2" rx="6"/>
+                                    {/* Thread grid lines */}
+                                    {[...Array(8)].map((_, i) => (
+                                        <line key={`h${i}`} x1="5" y1={12 + i*11} x2="75" y2={12 + i*11} stroke="#22c55e" strokeWidth="0.5" opacity="0.5"/>
+                                    ))}
+                                    {[...Array(6)].map((_, i) => (
+                                        <line key={`v${i}`} x1={15 + i*12} y1="5" x2={15 + i*12} y2="95" stroke="#22c55e" strokeWidth="0.5" opacity="0.5"/>
+                                    ))}
+                                    <text x="40" y="115" textAnchor="middle" fill="#94a3b8" fontSize="10">Thread Block</text>
+                                </g>
+                                
+                                {/* Equals sign */}
+                                <text x="105" y="80" fill="white" fontSize="20" fontWeight="bold">=</text>
+                                
+                                {/* Warps */}
+                                <g transform="translate(125, 20)">
+                                    {[0,1,2,3].map(i => (
+                                        <g key={i} transform={`translate(0, ${i * 28})`}>
+                                            <rect width="90" height="24" fill="#22c55e" rx="4" stroke="#4ade80"/>
+                                            <text x="45" y="16" textAnchor="middle" fill="white" fontSize="10" fontWeight="bold">32 Threads</text>
+                                        </g>
+                                    ))}
+                                    <text x="45" y="130" textAnchor="middle" fill="#94a3b8" fontSize="10">Warps</text>
+                                </g>
+                                
+                                {/* Arrow */}
+                                <path d="M 230 70 L 270 70" stroke="#64748b" strokeWidth="3" fill="none" markerEnd="url(#arrowhead1)"/>
+                                <defs>
+                                    <marker id="arrowhead1" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                                        <polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/>
+                                    </marker>
+                                </defs>
+                                
+                                {/* Multiprocessor */}
+                                <g transform="translate(280, 15)">
+                                    <rect width="100" height="120" fill="#1e293b" stroke="#a855f7" strokeWidth="2" rx="6"/>
+                                    {/* SM cores grid */}
+                                    {[...Array(6)].map((_, row) => (
+                                        [...Array(8)].map((_, col) => (
+                                            <rect 
+                                                key={`${row}-${col}`}
+                                                x={8 + col * 11}
+                                                y={8 + row * 17}
+                                                width="9"
+                                                height="14"
+                                                fill={row < 2 ? '#f59e0b' : '#22c55e'}
+                                                rx="1"
+                                            />
+                                        ))
+                                    ))}
+                                    <text x="50" y="135" textAnchor="middle" fill="#94a3b8" fontSize="10">Multiprocessor</text>
+                                </g>
+                                
+                                {/* Bullet points */}
+                                <g transform="translate(10, 165)">
+                                    <circle cx="8" cy="8" r="3" fill="#22c55e"/>
+                                    <text x="18" y="12" fill="#cbd5e1" fontSize="9">Warp scheduling hides latencies</text>
+                                    <circle cx="8" cy="28" r="3" fill="#3b82f6"/>
+                                    <text x="18" y="32" fill="#cbd5e1" fontSize="9">CPU core scheduling optimizes</text>
+                                    <text x="18" y="44" fill="#cbd5e1" fontSize="9">for latency and QoS</text>
+                                </g>
+                            </svg>
+                        </div>
+                        
+                        {/* Right side: Three blocks assigned to SM */}
+                        <div>
+                            <svg viewBox="0 0 380 220" style={{width: '100%'}}>
+                                <text x="190" y="15" textAnchor="middle" fill="#cbd5e1" fontSize="10" fontStyle="italic">
+                                    Three blocks are assigned to an SM.
+                                </text>
+                                
+                                {/* Three thread blocks */}
+                                {[0, 1, 2].map(blockIdx => (
+                                    <g key={blockIdx} transform={`translate(${blockIdx * 125}, 25)`}>
+                                        <text x="55" y="12" textAnchor="middle" fill="#94a3b8" fontSize="8" fontStyle="italic">Thread Indices</text>
+                                        <text x="10" y="24" fill="#64748b" fontSize="7">0 1</text>
+                                        <text x="35" y="24" fill="#64748b" fontSize="7">31 32 33</text>
+                                        <text x="75" y="24" fill="#64748b" fontSize="7">63 64 65</text>
+                                        <text x="100" y="24" fill="#64748b" fontSize="7">95</text>
+                                        
+                                        {/* Thread block box */}
+                                        <rect x="5" y="30" width="105" height="60" fill="none" stroke="#3b82f6" strokeWidth="2" rx="4"/>
+                                        
+                                        {/* Warps inside */}
+                                        {[0, 1, 2].map(warpIdx => (
+                                            <g key={warpIdx} transform={`translate(${10 + warpIdx * 33}, 38)`}>
+                                                <rect width="28" height="44" fill="#1e293b" stroke="#ef4444" strokeWidth="1" strokeDasharray="3,2" rx="3"/>
+                                                {/* Wavy threads */}
+                                                {[...Array(5)].map((_, i) => (
+                                                    <path 
+                                                        key={i}
+                                                        d={`M ${5 + i*4} 5 Q ${7 + i*4} 15, ${5 + i*4} 25 Q ${3 + i*4} 35, ${5 + i*4} 40`}
+                                                        stroke="#ef4444"
+                                                        strokeWidth="1.5"
+                                                        fill="none"
+                                                    />
+                                                ))}
+                                            </g>
+                                        ))}
+                                        
+                                        {/* Arrow down */}
+                                        <path d={`M 55 95 L 55 108`} stroke="#3b82f6" strokeWidth="2" markerEnd="url(#arrowBlue1)"/>
+                                    </g>
+                                ))}
+                                
+                                <defs>
+                                    <marker id="arrowBlue1" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                                        <polygon points="0 0, 8 3, 0 6" fill="#3b82f6"/>
+                                    </marker>
+                                </defs>
+                            </svg>
+                        </div>
+                    </div>
+                    
+                    {/* Bottom: GPU vs CPU Timeline comparison */}
+                    <div style={{display: 'grid', gridTemplateColumns: '1fr 200px', gap: '1rem', marginTop: '1rem'}}>
+                        <div style={{background: '#0f172a', borderRadius: '0.5rem', padding: '1rem'}}>
+                            {/* GPU Timeline */}
+                            <div style={{marginBottom: '1rem'}}>
+                                <div style={{color: 'white', fontSize: '11px', fontWeight: 'bold', marginBottom: '0.5rem', background: '#1e293b', padding: '0.3rem 0.5rem', borderRadius: '4px'}}>
+                                    GPU Stream Multiprocessor – High Throughput Processor
+                                </div>
+                                <div style={{display: 'flex', flexDirection: 'column', gap: '4px'}}>
+                                    {gpuTimeline.map((warp, warpIdx) => (
+                                        <div key={warpIdx} style={{display: 'flex', alignItems: 'center', gap: '4px'}}>
+                                            <span style={{color: '#94a3b8', fontSize: '10px', width: '25px'}}>W<sub>{warpIdx + 1}</sub></span>
+                                            <div style={{display: 'flex', gap: '1px'}}>
+                                                {warp.map((state, i) => (
+                                                    <div 
+                                                        key={i}
+                                                        style={{
+                                                            width: '16px',
+                                                            height: '14px',
+                                                            background: state === 0 ? colors.processing : state === 1 ? colors.waiting : colors.ready,
+                                                            borderRadius: '2px',
+                                                            border: i === time ? '2px solid #f59e0b' : 'none',
+                                                            boxSizing: 'border-box'
+                                                        }}
+                                                    />
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                            
+                            {/* CPU Timeline */}
+                            <div>
+                                <div style={{color: 'white', fontSize: '11px', fontWeight: 'bold', marginBottom: '0.5rem', background: '#1e293b', padding: '0.3rem 0.5rem', borderRadius: '4px'}}>
+                                    CPU core – Low Latency Processor
+                                </div>
+                                <div style={{display: 'flex', alignItems: 'center', gap: '4px'}}>
+                                    <span style={{color: '#94a3b8', fontSize: '10px', width: '25px'}}></span>
+                                    <div style={{display: 'flex', gap: '1px'}}>
+                                        {cpuTimeline.map((state, i) => (
+                                            <div 
+                                                key={i}
+                                                style={{
+                                                    width: '16px',
+                                                    height: '14px',
+                                                    background: state === 3 ? colors.context : colors.processing,
+                                                    borderRadius: '2px',
+                                                    border: i === time ? '2px solid #f59e0b' : 'none',
+                                                    boxSizing: 'border-box',
+                                                    position: 'relative'
+                                                }}
+                                            >
+                                                {state !== 3 && (
+                                                    <span style={{position: 'absolute', top: '0', left: '3px', fontSize: '8px', color: '#0f172a', fontWeight: 'bold'}}>
+                                                        T<sub style={{fontSize: '6px'}}>{cpuThread[i]}</sub>
+                                                    </span>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        {/* Legend */}
+                        <div style={{background: '#0f172a', borderRadius: '0.5rem', padding: '1rem'}}>
+                            <div style={{color: 'white', fontSize: '11px', fontWeight: 'bold', marginBottom: '0.5rem'}}>
+                                Computation Thread/Warp
+                            </div>
+                            <div style={{display: 'flex', flexDirection: 'column', gap: '6px'}}>
+                                <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                    <div style={{width: '20px', height: '14px', background: colors.processing, borderRadius: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                                        <span style={{fontSize: '7px', color: '#0f172a', fontWeight: 'bold'}}>Tₙ</span>
+                                    </div>
+                                    <span style={{color: '#cbd5e1', fontSize: '10px'}}>Processing</span>
+                                </div>
+                                <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                    <div style={{width: '20px', height: '14px', background: colors.waiting, borderRadius: '2px'}}/>
+                                    <span style={{color: '#cbd5e1', fontSize: '10px'}}>Waiting for data</span>
+                                </div>
+                                <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                    <div style={{width: '20px', height: '14px', background: colors.ready, borderRadius: '2px'}}/>
+                                    <span style={{color: '#cbd5e1', fontSize: '10px'}}>Ready to be processed</span>
+                                </div>
+                                <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                    <div style={{width: '20px', height: '14px', background: colors.context, borderRadius: '2px'}}/>
+                                    <span style={{color: '#cbd5e1', fontSize: '10px'}}>Context switch</span>
+                                </div>
+                            </div>
+                            
+                            <button 
+                                onClick={() => setIsPlaying(!isPlaying)}
+                                style={{marginTop: '1rem', width: '100%', padding: '0.4rem', background: isPlaying ? '#ef4444' : '#22c55e', border: 'none', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '10px', fontWeight: 'bold'}}
+                            >
+                                {isPlaying ? '⏸ Pause' : '▶ Play'}
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div style={{textAlign: 'center', marginTop: '0.75rem', color: '#64748b', fontSize: '10px'}}>
+                        Source: ECE408/Industry Analysis - GPU warp scheduling enables latency hiding by switching between warps when waiting for data
+                    </div>
+                </div>
+            );
+        };
+
+        // CPU vs GPU Comparison Component
+        const CPUGPUComparison = () => {
+            const [activeTab, setActiveTab] = React.useState('cpu');
+            
+            return (
+                <div className="diagram-container">
+                    <div className="diagram-title">CPU vs GPU Architecture Comparison</div>
+                    <div style={{display: 'flex', justifyContent: 'center', gap: '1rem', marginBottom: '1.5rem'}}>
+                        <button 
+                            onClick={() => setActiveTab('cpu')}
+                            style={{
+                                padding: '0.75rem 2rem',
+                                borderRadius: '0.5rem',
+                                border: 'none',
+                                background: activeTab === 'cpu' ? '#3b82f6' : '#334155',
+                                color: 'white',
+                                cursor: 'pointer',
+                                fontWeight: '600'
+                            }}
+                        >
+                            CPU Architecture
+                        </button>
+                        <button 
+                            onClick={() => setActiveTab('gpu')}
+                            style={{
+                                padding: '0.75rem 2rem',
+                                borderRadius: '0.5rem',
+                                border: 'none',
+                                background: activeTab === 'gpu' ? '#10b981' : '#334155',
+                                color: 'white',
+                                cursor: 'pointer',
+                                fontWeight: '600'
+                            }}
+                        >
+                            GPU Architecture
+                        </button>
+                    </div>
+                    
+                    <svg viewBox="0 0 800 400" style={{width: '100%', maxWidth: '800px', margin: '0 auto', display: 'block'}}>
+                        {activeTab === 'cpu' ? (
+                            <g>
+                                {/* CPU Cores */}
+                                {[0,1,2,3].map(i => (
+                                    <g key={i} transform={`translate(${100 + i * 160}, 50)`}>
+                                        <rect width="140" height="120" fill="#3b82f6" rx="8" stroke="#60a5fa" strokeWidth="2"/>
+                                        <text x="70" y="25" textAnchor="middle" fill="white" fontWeight="bold">Core {i}</text>
+                                        <rect x="10" y="35" width="120" height="25" fill="#1e40af" rx="4"/>
+                                        <text x="70" y="52" textAnchor="middle" fill="white" fontSize="10">Control Unit</text>
+                                        <rect x="10" y="65" width="55" height="20" fill="#2563eb" rx="3"/>
+                                        <text x="37" y="79" textAnchor="middle" fill="white" fontSize="9">ALU</text>
+                                        <rect x="75" y="65" width="55" height="20" fill="#2563eb" rx="3"/>
+                                        <text x="102" y="79" textAnchor="middle" fill="white" fontSize="9">ALU</text>
+                                        <rect x="10" y="90" width="120" height="20" fill="#1d4ed8" rx="3"/>
+                                        <text x="70" y="104" textAnchor="middle" fill="white" fontSize="9">L1/L2 Cache</text>
+                                    </g>
+                                ))}
+                                {/* L3 Cache */}
+                                <rect x="100" y="190" width="600" height="40" fill="#1e3a8a" rx="8"/>
+                                <text x="400" y="215" textAnchor="middle" fill="white" fontWeight="bold">Shared L3 Cache</text>
+                                
+                                {/* Memory Controller */}
+                                <rect x="200" y="250" width="400" height="40" fill="#0f172a" rx="8" stroke="#3b82f6"/>
+                                <text x="400" y="275" textAnchor="middle" fill="white">Memory Controller</text>
+                                
+                                {/* DRAM */}
+                                <rect x="150" y="310" width="500" height="60" fill="#1e293b" rx="8" stroke="#64748b"/>
+                                <text x="400" y="345" textAnchor="middle" fill="#94a3b8" fontWeight="bold">DRAM (DDR5)</text>
+                                
+                                {/* Labels */}
+                                <text x="400" y="395" textAnchor="middle" fill="#64748b" fontSize="12">
+                                    Few powerful cores optimized for low latency | Deep caches | Branch prediction
+                                </text>
+                            </g>
+                        ) : (
+                            <g>
+                                {/* GPU SMs */}
+                                {[0,1,2,3,4,5,6,7].map(row => (
+                                    <g key={row}>
+                                        {[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15].map(col => (
+                                            <rect 
+                                                key={col}
+                                                x={50 + col * 44}
+                                                y={30 + row * 35}
+                                                width="40"
+                                                height="30"
+                                                fill="#10b981"
+                                                rx="3"
+                                                stroke="#34d399"
+                                                strokeWidth="1"
+                                            />
+                                        ))}
+                                    </g>
+                                ))}
+                                <text x="400" y="25" textAnchor="middle" fill="white" fontWeight="bold" fontSize="14">
+                                    128 Streaming Multiprocessors (SMs)
+                                </text>
+                                
+                                {/* L2 Cache */}
+                                <rect x="50" y="320" width="700" height="30" fill="#065f46" rx="6"/>
+                                <text x="400" y="340" textAnchor="middle" fill="white" fontSize="12">L2 Cache (40MB)</text>
+                                
+                                {/* HBM */}
+                                <rect x="50" y="360" width="700" height="35" fill="#1e293b" rx="6" stroke="#10b981"/>
+                                <text x="400" y="382" textAnchor="middle" fill="#10b981" fontWeight="bold">HBM3 Memory (80GB @ 3.35 TB/s)</text>
+                                
+                                {/* Labels */}
+                                <text x="400" y="410" textAnchor="middle" fill="#64748b" fontSize="12">
+                                    Thousands of simple cores | Massive parallelism | Throughput optimized
+                                </text>
+                            </g>
+                        )}
+                    </svg>
+                    <div className="diagram-caption">
+                        {activeTab === 'cpu' 
+                            ? "CPU: Few powerful cores with large caches, optimized for single-thread performance"
+                            : "GPU: Many simple cores, optimized for parallel throughput across thousands of threads"
+                        }
+                    </div>
+                </div>
+            );
+        };
+
+        // CPU vs GPU Detailed Comparison Table (recreated from Industry Analysis)
+        const CPUGPUDetailedTable = () => {
+            const [highlightedRow, setHighlightedRow] = React.useState(null);
+            
+            const rows = [
+                {
+                    cpu: {
+                        title: "Number threads accessing a NVMe Q at time t = 1",
+                        detail: "One CPU only assigned to a Q, no pre-emption when in critical section of code accessing the queue => only one thread can access the queue"
+                    },
+                    gpu: {
+                        title: "Number threads potentially accessing a NVMe Q at time t = O(100000)",
+                        detail: "Thousands of threads can run in // per SM/CU and they can be pre-empted at any time."
+                    }
+                },
+                {
+                    cpu: {
+                        title: "No downside with threads running different code.",
+                        hasArrows: true,
+                        arrows: [{color: '#fbbf24', label: 'Code A'}, {color: '#a3e635', label: 'Code B'}, {color: '#4ade80', label: 'Code C'}]
+                    },
+                    gpu: {
+                        title: "Optimized/very efficient for threads running same code.",
+                        hasArrows: true,
+                        arrows: [{color: '#fbbf24', label: 'Code A'}, {color: '#fbbf24', label: 'CodeA'}, {color: '#fbbf24', label: 'Code A'}]
+                    }
+                },
+                {
+                    cpu: {
+                        title: "Poor at handling memory access latency",
+                        detail: "CPU/core stalls wasting compute\nHyperthreading when avail is of very limited help (toggling between 2 threads / core)"
+                    },
+                    gpu: {
+                        title: "Excellent at handling memory access latency",
+                        detail: "GPU doesn't stall but schedule other threads at very large scale"
+                    }
+                },
+                {
+                    cpu: {
+                        title: "User can assign threads to CPU"
+                    },
+                    gpu: {
+                        title: "User can't assign threads to GPU SM/CU, assignment decided by hardware only"
+                    }
+                },
+                {
+                    cpu: {
+                        title: "Programming can use Interrupts (MSI-X)",
+                        hasInterrupt: true
+                    },
+                    gpu: {
+                        title: "No interrupts available for programming",
+                        detail: "GPUs are designed for massively parallel computation, not for event-driven control.\nNo hardware nor software available to handle interrupt handlers."
+                    }
+                },
+                {
+                    cpu: {
+                        title: "Any threads has rich OS services at hand (memory allocation for example)"
+                    },
+                    gpu: {
+                        title: "On GPU typical host services are not available. The only services available are GPU specific (thread synchronization for example)."
+                    }
+                }
+            ];
+            
+            return (
+                <div style={{background: 'white', borderRadius: '0.75rem', overflow: 'hidden', marginTop: '2rem', boxShadow: '0 4px 20px rgba(0, 0, 0, 0.3)'}}>
+                    {/* Yellow/purple accent bar */}
+                    <div style={{display: 'flex'}}>
+                        <div style={{width: '6px', background: 'linear-gradient(to bottom, #f59e0b, #eab308, #a855f7)'}}></div>
+                        <div style={{flex: 1}}>
+                            {/* Header */}
+                            <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', background: '#0f172a'}}>
+                                <div style={{padding: '1rem', textAlign: 'center', fontWeight: 'bold', color: 'white', fontSize: '1.1rem', borderRight: '1px solid #334155'}}>CPU</div>
+                                <div style={{padding: '1rem', textAlign: 'center', fontWeight: 'bold', color: 'white', fontSize: '1.1rem'}}>GPU</div>
+                            </div>
+                            
+                            {/* Rows */}
+                            {rows.map((row, idx) => (
+                                <div 
+                                    key={idx}
+                                    onMouseEnter={() => setHighlightedRow(idx)}
+                                    onMouseLeave={() => setHighlightedRow(null)}
+                                    style={{
+                                        display: 'grid', 
+                                        gridTemplateColumns: '1fr 1fr',
+                                        background: highlightedRow === idx ? '#f0f9ff' : (idx % 2 === 0 ? '#e5e7eb' : '#f3f4f6'),
+                                        borderBottom: '1px solid #d1d5db',
+                                        transition: 'background 0.2s'
+                                    }}
+                                >
+                                    {/* CPU Cell */}
+                                    <div style={{padding: '1rem', borderRight: '1px solid #d1d5db'}}>
+                                        <div style={{fontWeight: 'bold', color: '#1f2937', marginBottom: row.cpu.detail || row.cpu.hasArrows || row.cpu.hasInterrupt ? '0.5rem' : 0}}>
+                                            {row.cpu.title}
+                                        </div>
+                                        {row.cpu.detail && (
+                                            <div style={{fontSize: '0.85rem', color: '#4b5563', lineHeight: '1.4', whiteSpace: 'pre-line'}}>
+                                                {row.cpu.detail}
+                                            </div>
+                                        )}
+                                        {row.cpu.hasArrows && (
+                                            <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.5rem'}}>
+                                                {row.cpu.arrows.map((arrow, i) => (
+                                                    <div key={i} style={{
+                                                        width: '60px',
+                                                        height: '50px',
+                                                        background: arrow.color,
+                                                        clipPath: 'polygon(0 0, 100% 0, 100% 60%, 50% 100%, 0 60%)',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        paddingBottom: '15px',
+                                                        fontSize: '0.75rem',
+                                                        fontWeight: 'bold',
+                                                        color: '#1f2937'
+                                                    }}>
+                                                        {arrow.label}
+                                                    </div>
+                                                ))}
+                                                <span style={{color: '#4b5563', fontSize: '0.85rem', marginLeft: '0.5rem'}}>Threads</span>
+                                            </div>
+                                        )}
+                                        {row.cpu.hasInterrupt && (
+                                            <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.5rem'}}>
+                                                <span style={{fontSize: '0.8rem', color: '#4b5563'}}>MSI-X</span>
+                                                <svg width="30" height="20" viewBox="0 0 30 20">
+                                                    <path d="M 0 10 L 8 10 L 10 5 L 14 15 L 18 5 L 22 15 L 24 10 L 30 10" stroke="#ef4444" strokeWidth="3" fill="none"/>
+                                                </svg>
+                                                <div style={{background: '#fef3c7', border: '1px solid #f59e0b', borderRadius: '4px', padding: '0.25rem 0.5rem', fontSize: '0.75rem', color: '#92400e'}}>
+                                                    Interrupt handler
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                    
+                                    {/* GPU Cell */}
+                                    <div style={{padding: '1rem'}}>
+                                        <div style={{fontWeight: 'bold', color: '#1f2937', marginBottom: row.gpu.detail || row.gpu.hasArrows ? '0.5rem' : 0}}>
+                                            {row.gpu.title}
+                                        </div>
+                                        {row.gpu.detail && (
+                                            <div style={{fontSize: '0.85rem', color: '#4b5563', lineHeight: '1.4', whiteSpace: 'pre-line'}}>
+                                                {row.gpu.detail.split('massively parallel computation').map((part, i) => 
+                                                    i === 0 ? part : <React.Fragment key={i}><span style={{color: '#dc2626'}}>massively parallel computation</span>{part.split('event-driven control').map((p, j) => 
+                                                        j === 0 ? p : <React.Fragment key={j}><span style={{color: '#dc2626'}}>event-driven control</span>{p}</React.Fragment>
+                                                    )}</React.Fragment>
+                                                )}
+                                            </div>
+                                        )}
+                                        {row.gpu.hasArrows && (
+                                            <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.5rem'}}>
+                                                {row.gpu.arrows.map((arrow, i) => (
+                                                    <div key={i} style={{
+                                                        width: '60px',
+                                                        height: '50px',
+                                                        background: arrow.color,
+                                                        clipPath: 'polygon(0 0, 100% 0, 100% 60%, 50% 100%, 0 60%)',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        paddingBottom: '15px',
+                                                        fontSize: '0.75rem',
+                                                        fontWeight: 'bold',
+                                                        color: '#1f2937'
+                                                    }}>
+                                                        {arrow.label}
+                                                    </div>
+                                                ))}
+                                                <span style={{color: '#4b5563', fontSize: '0.85rem', marginLeft: '0.5rem'}}>Threads</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                    
+                    {/* Source */}
+                    <div style={{background: '#f8fafc', padding: '0.75rem', textAlign: 'center', fontSize: '0.8rem', color: '#64748b'}}>
+                        Source: Industry Analysis (Industry) - CPU vs GPU I/O Workload Comparison
+                    </div>
+                </div>
+            );
+        };
+
+        // Thread Hierarchy Interactive Component
+        const ThreadHierarchyInteractive = () => {
+            const [hoveredLevel, setHoveredLevel] = React.useState(null);
+            const [animating, setAnimating] = React.useState(false);
+            
+            React.useEffect(() => {
+                const interval = setInterval(() => {
+                    setAnimating(prev => !prev);
+                }, 1000);
+                return () => clearInterval(interval);
+            }, []);
+            
+            return (
+                <div className="diagram-container">
+                    <div className="diagram-title">Interactive Thread Hierarchy Visualization</div>
+                    <svg viewBox="0 0 900 500" style={{width: '100%', maxWidth: '900px', margin: '0 auto', display: 'block'}}>
+                        {/* Grid Level */}
+                        <g onMouseEnter={() => setHoveredLevel('grid')} onMouseLeave={() => setHoveredLevel(null)}>
+                            <rect x="50" y="20" width="800" height="130" fill={hoveredLevel === 'grid' ? '#4c1d95' : '#5b21b6'} 
+                                  rx="12" stroke="#8b5cf6" strokeWidth="2" style={{transition: 'fill 0.3s'}}/>
+                            <text x="450" y="50" textAnchor="middle" fill="white" fontWeight="bold" fontSize="16">
+                                GRID (Kernel Launch)
+                            </text>
+                            
+                            {/* Blocks in Grid */}
+                            {[0,1,2,3,4,5].map(i => (
+                                <g key={i}>
+                                    <rect x={80 + i * 125} y="65" width="110" height="70" 
+                                          fill="#7c3aed" rx="8" stroke="#a78bfa" strokeWidth="1"/>
+                                    <text x={135 + i * 125} y="90" textAnchor="middle" fill="white" fontSize="11">
+                                        Block ({Math.floor(i/3)},{i%3})
+                                    </text>
+                                    <text x={135 + i * 125} y="105" textAnchor="middle" fill="#c4b5fd" fontSize="9">
+                                        256 threads
+                                    </text>
+                                    {/* Mini thread representation */}
+                                    <g transform={`translate(${90 + i * 125}, 112)`}>
+                                        {[...Array(8)].map((_, j) => (
+                                            <rect key={j} x={j * 12} y="0" width="10" height="10" 
+                                                  fill="#22c55e" rx="2" 
+                                                  style={{opacity: animating && i === 0 ? 1 : 0.6}}/>
+                                        ))}
+                                    </g>
+                                </g>
+                            ))}
+                        </g>
+                        
+                        {/* Arrow */}
+                        <path d="M 450 155 L 450 175" stroke="#8b5cf6" strokeWidth="3" markerEnd="url(#arrowhead)"/>
+                        
+                        {/* Block Detail Level */}
+                        <g onMouseEnter={() => setHoveredLevel('block')} onMouseLeave={() => setHoveredLevel(null)}>
+                            <rect x="100" y="185" width="700" height="140" 
+                                  fill={hoveredLevel === 'block' ? '#065f46' : '#047857'} 
+                                  rx="12" stroke="#10b981" strokeWidth="2" style={{transition: 'fill 0.3s'}}/>
+                            <text x="450" y="210" textAnchor="middle" fill="white" fontWeight="bold" fontSize="16">
+                                THREAD BLOCK (0,0) — 256 Threads
+                            </text>
+                            
+                            {/* Warps in Block */}
+                            {[0,1,2,3,4,5,6,7].map(i => (
+                                <g key={i}>
+                                    <rect x={120 + i * 85} y="225" width="75" height="85" 
+                                          fill="#059669" rx="6" stroke="#34d399" strokeWidth="1"/>
+                                    <text x={157 + i * 85} y="245" textAnchor="middle" fill="white" fontSize="10">
+                                        Warp {i}
+                                    </text>
+                                    {/* 32 threads visualization */}
+                                    <g transform={`translate(${125 + i * 85}, 252)`}>
+                                        {[...Array(32)].map((_, j) => (
+                                            <rect key={j} x={(j % 8) * 8} y={Math.floor(j / 8) * 8} 
+                                                  width="6" height="6" fill="#fbbf24" rx="1"
+                                                  style={{opacity: animating && i === 0 ? 1 : 0.7}}/>
+                                        ))}
+                                    </g>
+                                    <text x={157 + i * 85} y="300" textAnchor="middle" fill="#a7f3d0" fontSize="8">
+                                        32 threads
+                                    </text>
+                                </g>
+                            ))}
+                        </g>
+                        
+                        {/* Arrow */}
+                        <path d="M 450 330 L 450 350" stroke="#10b981" strokeWidth="3" markerEnd="url(#arrowhead-green)"/>
+                        
+                        {/* Warp Detail Level */}
+                        <g onMouseEnter={() => setHoveredLevel('warp')} onMouseLeave={() => setHoveredLevel(null)}>
+                            <rect x="150" y="360" width="600" height="120" 
+                                  fill={hoveredLevel === 'warp' ? '#854d0e' : '#a16207'} 
+                                  rx="12" stroke="#fbbf24" strokeWidth="2" style={{transition: 'fill 0.3s'}}/>
+                            <text x="450" y="385" textAnchor="middle" fill="white" fontWeight="bold" fontSize="16">
+                                WARP 0 — 32 Threads Executing in SIMT
+                            </text>
+                            
+                            {/* Individual Threads */}
+                            {[...Array(32)].map((_, i) => (
+                                <g key={i}>
+                                    <rect x={170 + i * 18} y="400" width="15" height="50" 
+                                          fill={animating ? '#22c55e' : '#15803d'} rx="3"
+                                          style={{transition: 'fill 0.5s', transitionDelay: `${i * 20}ms`}}/>
+                                    <text x={177 + i * 18} y="460" textAnchor="middle" fill="#fef3c7" fontSize="7">
+                                        T{i}
+                                    </text>
+                                </g>
+                            ))}
+                            
+                            {/* SIMT indicator */}
+                            <text x="450" y="485" textAnchor="middle" fill="#fef3c7" fontSize="11">
+                                ↑ All 32 threads execute the SAME instruction simultaneously ↑
+                            </text>
+                        </g>
+                        
+                        {/* Arrow markers */}
+                        <defs>
+                            <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                                <polygon points="0 0, 10 3.5, 0 7" fill="#8b5cf6"/>
+                            </marker>
+                            <marker id="arrowhead-green" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                                <polygon points="0 0, 10 3.5, 0 7" fill="#10b981"/>
+                            </marker>
+                        </defs>
+                    </svg>
+                    
+                    {/* Info Panel */}
+                    <div style={{
+                        marginTop: '1.5rem',
+                        padding: '1rem',
+                        background: hoveredLevel ? 'rgba(99, 102, 241, 0.2)' : 'transparent',
+                        borderRadius: '0.5rem',
+                        transition: 'background 0.3s',
+                        minHeight: '80px'
+                    }}>
+                        {hoveredLevel === 'grid' && (
+                            <div style={{color: '#c4b5fd'}}>
+                                <strong style={{color: 'white'}}>Grid:</strong> The top-level organization of a kernel launch. 
+                                Contains all thread blocks. Can be 1D, 2D, or 3D. Blocks in a grid execute independently 
+                                and may run in any order across available SMs.
+                            </div>
+                        )}
+                        {hoveredLevel === 'block' && (
+                            <div style={{color: '#a7f3d0'}}>
+                                <strong style={{color: 'white'}}>Thread Block:</strong> A group of threads that can cooperate. 
+                                Threads share memory and can synchronize via __syncthreads(). Limited to 1024 threads max.
+                                Divided into warps for execution.
+                            </div>
+                        )}
+                        {hoveredLevel === 'warp' && (
+                            <div style={{color: '#fef3c7'}}>
+                                <strong style={{color: 'white'}}>Warp:</strong> The fundamental scheduling unit. 
+                                32 threads execute in perfect lockstep (SIMT). All threads in a warp execute the same 
+                                instruction at the same time. Branch divergence forces serial execution.
+                            </div>
+                        )}
+                        {!hoveredLevel && (
+                            <div style={{color: '#94a3b8', textAlign: 'center'}}>
+                                Hover over each level to learn more about the thread hierarchy
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        // Thread Block Visualization
+        const ThreadBlockVisualization = () => {
+            return (
+                <div className="diagram-container">
+                    <div className="diagram-title">Thread Block Properties</div>
+                    <svg viewBox="0 0 800 350" style={{width: '100%', maxWidth: '800px', margin: '0 auto', display: 'block'}}>
+                        {/* Block visualization */}
+                        <rect x="50" y="30" width="300" height="280" fill="#059669" rx="12" stroke="#34d399" strokeWidth="2"/>
+                        <text x="200" y="55" textAnchor="middle" fill="white" fontWeight="bold" fontSize="14">Thread Block</text>
+                        
+                        {/* Shared Memory */}
+                        <rect x="70" y="70" width="260" height="50" fill="#047857" rx="6" stroke="#10b981"/>
+                        <text x="200" y="100" textAnchor="middle" fill="white" fontSize="12">Shared Memory (48KB)</text>
+                        
+                        {/* Threads */}
+                        <g transform="translate(70, 135)">
+                            {[...Array(64)].map((_, i) => (
+                                <rect key={i} x={(i % 16) * 16} y={Math.floor(i / 16) * 16} 
+                                      width="14" height="14" fill="#fbbf24" rx="2"/>
+                            ))}
+                        </g>
+                        <text x="200" y="230" textAnchor="middle" fill="white" fontSize="11">256 Threads (shown: 64)</text>
+                        
+                        {/* Sync barrier */}
+                        <rect x="70" y="245" width="260" height="30" fill="#0f766e" rx="4"/>
+                        <text x="200" y="265" textAnchor="middle" fill="white" fontSize="11">__syncthreads() barrier</text>
+                        
+                        {/* Properties list */}
+                        <g transform="translate(420, 50)">
+                            <text fill="white" fontWeight="bold" fontSize="14">Block Properties:</text>
+                            
+                            <text y="35" fill="#94a3b8" fontSize="12">• Max 1024 threads per block</text>
+                            <text y="60" fill="#94a3b8" fontSize="12">• Can be 1D, 2D, or 3D</text>
+                            <text y="85" fill="#94a3b8" fontSize="12">• Threads share memory</text>
+                            <text y="110" fill="#94a3b8" fontSize="12">• Can synchronize within block</text>
+                            <text y="135" fill="#94a3b8" fontSize="12">• Execute on single SM</text>
+                            <text y="160" fill="#94a3b8" fontSize="12">• blockIdx.{'{x,y,z}'} identifies block</text>
+                            <text y="185" fill="#94a3b8" fontSize="12">• blockDim.{'{x,y,z}'} gives dimensions</text>
+                            
+                            <rect y="210" width="330" height="80" fill="rgba(239, 68, 68, 0.2)" rx="6" stroke="#ef4444"/>
+                            <text y="235" fill="#fca5a5" fontSize="11" fontWeight="bold">⚠️ Cannot synchronize with other blocks</text>
+                            <text y="255" fill="#fca5a5" fontSize="11">⚠️ Blocks may execute in any order</text>
+                            <text y="275" fill="#fca5a5" fontSize="11">⚠️ Cannot share data between blocks</text>
+                        </g>
+                    </svg>
+                </div>
+            );
+        };
+
+        // Warp Visualization Component
+        const WarpVisualization = () => {
+            const [step, setStep] = React.useState(0);
+            const [isPlaying, setIsPlaying] = React.useState(false);
+            
+            React.useEffect(() => {
+                if (isPlaying) {
+                    const interval = setInterval(() => {
+                        setStep(prev => (prev + 1) % 4);
+                    }, 1000);
+                    return () => clearInterval(interval);
+                }
+            }, [isPlaying]);
+            
+            const instructions = [
+                { name: 'LOAD', desc: 'Load data from global memory', color: '#3b82f6' },
+                { name: 'MUL', desc: 'Multiply operation', color: '#10b981' },
+                { name: 'ADD', desc: 'Addition operation', color: '#f59e0b' },
+                { name: 'STORE', desc: 'Store result to memory', color: '#ef4444' }
+            ];
+            
+            return (
+                <div className="diagram-container">
+                    <div className="diagram-title">Warp SIMT Execution</div>
+                    <div style={{display: 'flex', justifyContent: 'center', gap: '1rem', marginBottom: '1rem'}}>
+                        <button 
+                            onClick={() => setIsPlaying(!isPlaying)}
+                            style={{
+                                padding: '0.5rem 1.5rem',
+                                borderRadius: '0.5rem',
+                                border: 'none',
+                                background: isPlaying ? '#ef4444' : '#10b981',
+                                color: 'white',
+                                cursor: 'pointer',
+                                fontWeight: '600'
+                            }}
+                        >
+                            {isPlaying ? '⏸ Pause' : '▶ Play Animation'}
+                        </button>
+                        <button 
+                            onClick={() => setStep((step + 1) % 4)}
+                            style={{
+                                padding: '0.5rem 1.5rem',
+                                borderRadius: '0.5rem',
+                                border: '1px solid #6366f1',
+                                background: 'transparent',
+                                color: '#a5b4fc',
+                                cursor: 'pointer'
+                            }}
+                        >
+                            Step →
+                        </button>
+                    </div>
+                    
+                    <svg viewBox="0 0 800 300" style={{width: '100%', maxWidth: '800px', margin: '0 auto', display: 'block'}}>
+                        {/* Instruction indicator */}
+                        <rect x="50" y="20" width="700" height="50" fill="rgba(99, 102, 241, 0.3)" rx="8"/>
+                        <text x="100" y="50" fill="white" fontSize="14">Current Instruction:</text>
+                        <rect x="250" y="30" width="150" height="30" fill={instructions[step].color} rx="6"/>
+                        <text x="325" y="52" textAnchor="middle" fill="white" fontWeight="bold">{instructions[step].name}</text>
+                        <text x="450" y="50" fill="#94a3b8" fontSize="12">{instructions[step].desc}</text>
+                        
+                        {/* 32 Threads */}
+                        <g transform="translate(50, 90)">
+                            <text fill="#94a3b8" fontSize="12">32 Threads executing in lockstep:</text>
+                            {[...Array(32)].map((_, i) => (
+                                <g key={i} transform={`translate(${(i % 16) * 44}, ${Math.floor(i / 16) * 90 + 20})`}>
+                                    <rect width="40" height="70" fill={instructions[step].color} rx="4"
+                                          style={{opacity: 0.7 + (Math.sin(step + i * 0.1) * 0.3)}}/>
+                                    <text x="20" y="20" textAnchor="middle" fill="white" fontSize="10" fontWeight="bold">T{i}</text>
+                                    <text x="20" y="40" textAnchor="middle" fill="white" fontSize="8">{instructions[step].name}</text>
+                                    <text x="20" y="55" textAnchor="middle" fill="rgba(255,255,255,0.7)" fontSize="7">data[{i}]</text>
+                                </g>
+                            ))}
+                        </g>
+                        
+                        {/* Cycle indicator */}
+                        <text x="400" y="290" textAnchor="middle" fill="#fbbf24" fontSize="14" fontWeight="bold">
+                            Cycle {step + 1}: All 32 threads execute {instructions[step].name} simultaneously
+                        </text>
+                    </svg>
+                    <div className="diagram-caption">
+                        All threads in a warp execute the same instruction on different data (SIMT). 
+                        The hardware issues one instruction fetch for 32 threads.
+                    </div>
+                </div>
+            );
+        };
+
+        // Branch Divergence Demo
+        const BranchDivergenceDemo = () => {
+            const [showDivergent, setShowDivergent] = React.useState(false);
+            
+            return (
+                <div className="diagram-container">
+                    <div className="diagram-title">Branch Divergence Impact</div>
+                    <div style={{display: 'flex', justifyContent: 'center', marginBottom: '1rem'}}>
+                        <button 
+                            onClick={() => setShowDivergent(!showDivergent)}
+                            style={{
+                                padding: '0.75rem 2rem',
+                                borderRadius: '0.5rem',
+                                border: 'none',
+                                background: showDivergent ? '#ef4444' : '#10b981',
+                                color: 'white',
+                                cursor: 'pointer',
+                                fontWeight: '600'
+                            }}
+                        >
+                            {showDivergent ? 'Show: Divergent Code' : 'Show: Uniform Code'}
+                        </button>
+                    </div>
+                    
+                    <svg viewBox="0 0 800 350" style={{width: '100%', maxWidth: '800px', margin: '0 auto', display: 'block'}}>
+                        {!showDivergent ? (
+                            <g>
+                                {/* Uniform execution */}
+                                <text x="400" y="30" textAnchor="middle" fill="white" fontWeight="bold" fontSize="16">
+                                    Uniform Code Path (No Divergence)
+                                </text>
+                                
+                                <rect x="50" y="50" width="700" height="80" fill="#059669" rx="8"/>
+                                <text x="400" y="80" textAnchor="middle" fill="white" fontSize="14">
+                                    if (blockIdx.x {'>'} 2) {'{'} ... {'}'}
+                                </text>
+                                <text x="400" y="105" textAnchor="middle" fill="#a7f3d0" fontSize="12">
+                                    All threads in warp take same path → Full efficiency
+                                </text>
+                                
+                                {/* Threads all green */}
+                                <g transform="translate(50, 150)">
+                                    {[...Array(32)].map((_, i) => (
+                                        <rect key={i} x={i * 22} y="0" width="20" height="60" fill="#22c55e" rx="3"/>
+                                    ))}
+                                </g>
+                                <text x="400" y="230" textAnchor="middle" fill="#22c55e" fontWeight="bold">
+                                    32/32 threads active = 100% efficiency
+                                </text>
+                                
+                                {/* Timeline */}
+                                <rect x="100" y="260" width="600" height="40" fill="#0f172a" rx="6"/>
+                                <rect x="100" y="260" width="600" height="40" fill="#22c55e" rx="6"/>
+                                <text x="400" y="285" textAnchor="middle" fill="white" fontWeight="bold">1 pass: All threads execute</text>
+                            </g>
+                        ) : (
+                            <g>
+                                {/* Divergent execution */}
+                                <text x="400" y="30" textAnchor="middle" fill="white" fontWeight="bold" fontSize="16">
+                                    Divergent Code Path (Branch Divergence)
+                                </text>
+                                
+                                <rect x="50" y="50" width="700" height="80" fill="#dc2626" rx="8"/>
+                                <text x="400" y="80" textAnchor="middle" fill="white" fontSize="14">
+                                    if (threadIdx.x {'>'} 15) {'{'} ... {'}'} else {'{'} ... {'}'}
+                                </text>
+                                <text x="400" y="105" textAnchor="middle" fill="#fca5a5" fontSize="12">
+                                    Threads in same warp take different paths → Serialized execution
+                                </text>
+                                
+                                {/* Threads - first 16 one color, next 16 another */}
+                                <g transform="translate(50, 150)">
+                                    {[...Array(32)].map((_, i) => (
+                                        <rect key={i} x={i * 22} y="0" width="20" height="60" 
+                                              fill={i <= 15 ? '#3b82f6' : '#f59e0b'} rx="3"/>
+                                    ))}
+                                </g>
+                                <text x="225" y="230" textAnchor="middle" fill="#3b82f6" fontSize="11">ELSE path (T0-T15)</text>
+                                <text x="575" y="230" textAnchor="middle" fill="#f59e0b" fontSize="11">IF path (T16-T31)</text>
+                                
+                                {/* Timeline showing serialization */}
+                                <rect x="100" y="260" width="600" height="40" fill="#0f172a" rx="6"/>
+                                <rect x="100" y="260" width="290" height="40" fill="#3b82f6" rx="6" style={{borderRadius: '6px 0 0 6px'}}/>
+                                <rect x="410" y="260" width="290" height="40" fill="#f59e0b" style={{borderRadius: '0 6px 6px 0'}}/>
+                                <text x="245" y="285" textAnchor="middle" fill="white" fontSize="11">Pass 1: ELSE path</text>
+                                <text x="555" y="285" textAnchor="middle" fill="white" fontSize="11">Pass 2: IF path</text>
+                                
+                                <text x="400" y="330" textAnchor="middle" fill="#ef4444" fontWeight="bold">
+                                    2 passes required = 50% efficiency!
+                                </text>
+                            </g>
+                        )}
+                    </svg>
+                    <div className="diagram-caption">
+                        {showDivergent 
+                            ? "When threads diverge, the GPU must execute both paths serially, masking inactive threads"
+                            : "When all threads take the same path, full warp efficiency is maintained"
+                        }
+                    </div>
+                </div>
+            );
+        };
+
+        // Warp Scheduler Demo
+        const WarpSchedulerDemo = () => {
+            const [cycle, setCycle] = React.useState(0);
+            const [isPlaying, setIsPlaying] = React.useState(false);
+            
+            React.useEffect(() => {
+                if (isPlaying) {
+                    const interval = setInterval(() => {
+                        setCycle(prev => (prev + 1) % 16);
+                    }, 500);
+                    return () => clearInterval(interval);
+                }
+            }, [isPlaying]);
+            
+            const warps = [
+                { id: 0, schedule: [1,1,0,0,0,0,1,1,0,0,0,0,1,1,0,0] },
+                { id: 1, schedule: [0,0,1,1,0,0,0,0,1,1,0,0,0,0,1,1] },
+                { id: 2, schedule: [0,0,0,0,1,1,0,0,0,0,1,1,0,0,0,0] },
+                { id: 3, schedule: [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0] },
+            ];
+            
+            // 0 = waiting, 1 = executing, 2 = stalled on memory
+            const warpStates = [
+                [1,1,2,2,2,2,1,1,2,2,2,2,1,1,2,2],
+                [2,2,1,1,2,2,2,2,1,1,2,2,2,2,1,1],
+                [2,2,2,2,1,1,2,2,2,2,1,1,2,2,2,2],
+                [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+            ];
+            
+            return (
+                <div className="diagram-container">
+                    <div className="diagram-title">Zero-Overhead Warp Scheduling</div>
+                    <div style={{display: 'flex', justifyContent: 'center', gap: '1rem', marginBottom: '1rem'}}>
+                        <button 
+                            onClick={() => setIsPlaying(!isPlaying)}
+                            style={{
+                                padding: '0.5rem 1.5rem',
+                                borderRadius: '0.5rem',
+                                border: 'none',
+                                background: isPlaying ? '#ef4444' : '#10b981',
+                                color: 'white',
+                                cursor: 'pointer',
+                                fontWeight: '600'
+                            }}
+                        >
+                            {isPlaying ? '⏸ Pause' : '▶ Play'}
+                        </button>
+                        <span style={{color: '#94a3b8', alignSelf: 'center'}}>Cycle: {cycle}</span>
+                    </div>
+                    
+                    <svg viewBox="0 0 800 350" style={{width: '100%', maxWidth: '800px', margin: '0 auto', display: 'block'}}>
+                        {/* Legend */}
+                        <g transform="translate(50, 20)">
+                            <rect width="20" height="15" fill="#22c55e" rx="2"/>
+                            <text x="30" y="12" fill="#94a3b8" fontSize="11">Executing</text>
+                            <rect x="120" width="20" height="15" fill="#f59e0b" rx="2"/>
+                            <text x="150" y="12" fill="#94a3b8" fontSize="11">Ready (waiting)</text>
+                            <rect x="260" width="20" height="15" fill="#ef4444" rx="2"/>
+                            <text x="290" y="12" fill="#94a3b8" fontSize="11">Stalled (memory)</text>
+                        </g>
+                        
+                        {/* Timeline header */}
+                        <g transform="translate(150, 50)">
+                            {[...Array(16)].map((_, i) => (
+                                <text key={i} x={i * 38 + 15} y="0" textAnchor="middle" 
+                                      fill={i === cycle ? '#fbbf24' : '#64748b'} 
+                                      fontSize="10" fontWeight={i === cycle ? 'bold' : 'normal'}>
+                                    {i}
+                                </text>
+                            ))}
+                        </g>
+                        
+                        {/* Warp timelines */}
+                        {warps.map((warp, wi) => (
+                            <g key={wi} transform={`translate(50, ${80 + wi * 60})`}>
+                                <text y="25" fill="white" fontSize="12" fontWeight="bold">Warp {warp.id}</text>
+                                <g transform="translate(100, 0)">
+                                    {warpStates[wi].map((state, i) => (
+                                        <rect key={i} x={i * 38} y="5" width="35" height="35"
+                                              fill={state === 1 ? '#22c55e' : state === 2 ? '#ef4444' : '#f59e0b'}
+                                              rx="4"
+                                              stroke={i === cycle ? '#fbbf24' : 'transparent'}
+                                              strokeWidth="3"
+                                              style={{opacity: i <= cycle ? 1 : 0.3}}/>
+                                    ))}
+                                </g>
+                            </g>
+                        ))}
+                        
+                        {/* Current cycle indicator */}
+                        <line x1={150 + cycle * 38 + 17} y1="60" x2={150 + cycle * 38 + 17} y2="320" 
+                              stroke="#fbbf24" strokeWidth="2" strokeDasharray="5,5"/>
+                        
+                        {/* Explanation */}
+                        <text x="400" y="330" textAnchor="middle" fill="#94a3b8" fontSize="12">
+                            When a warp stalls on memory, another ready warp is immediately scheduled — zero overhead!
+                        </text>
+                    </svg>
+                    <div className="diagram-caption">
+                        GPU hides memory latency by switching between warps. While one warp waits for memory, 
+                        others execute. This is why high occupancy is important.
+                    </div>
+                </div>
+            );
+        };
+
+        // Occupancy Calculator
+        const OccupancyCalculator = () => {
+            const [threadsPerBlock, setThreadsPerBlock] = React.useState(256);
+            const [registersPerThread, setRegistersPerThread] = React.useState(32);
+            const [sharedMemPerBlock, setSharedMemPerBlock] = React.useState(16384);
+            
+            const maxThreadsPerSM = 2048;
+            const maxBlocksPerSM = 32;
+            const maxRegistersPerSM = 65536;
+            const maxSharedMemPerSM = 49152;
+            
+            const warpsPerBlock = Math.ceil(threadsPerBlock / 32);
+            const blocksByThreads = Math.floor(maxThreadsPerSM / threadsPerBlock);
+            const blocksByBlocks = maxBlocksPerSM;
+            const blocksByRegisters = Math.floor(maxRegistersPerSM / (threadsPerBlock * registersPerThread));
+            const blocksBySharedMem = sharedMemPerBlock > 0 ? Math.floor(maxSharedMemPerSM / sharedMemPerBlock) : Infinity;
+            
+            const actualBlocks = Math.min(blocksByThreads, blocksByBlocks, blocksByRegisters, blocksBySharedMem);
+            const activeWarps = actualBlocks * warpsPerBlock;
+            const maxWarps = maxThreadsPerSM / 32;
+            const occupancy = (activeWarps / maxWarps * 100).toFixed(1);
+            
+            const limitingFactor = 
+                actualBlocks === blocksByThreads ? 'Threads per SM' :
+                actualBlocks === blocksByRegisters ? 'Registers per SM' :
+                actualBlocks === blocksBySharedMem ? 'Shared Memory per SM' : 'Blocks per SM';
+            
+            return (
+                <div className="diagram-container">
+                    <div className="diagram-title">Interactive Occupancy Calculator</div>
+                    <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem', marginBottom: '1.5rem'}}>
+                        <div>
+                            <label style={{color: '#94a3b8', display: 'block', marginBottom: '0.5rem'}}>
+                                Threads per Block: {threadsPerBlock}
+                            </label>
+                            <input type="range" min="32" max="1024" step="32" value={threadsPerBlock}
+                                   onChange={(e) => setThreadsPerBlock(Number(e.target.value))}
+                                   style={{width: '100%'}}/>
+                        </div>
+                        <div>
+                            <label style={{color: '#94a3b8', display: 'block', marginBottom: '0.5rem'}}>
+                                Registers per Thread: {registersPerThread}
+                            </label>
+                            <input type="range" min="16" max="255" step="1" value={registersPerThread}
+                                   onChange={(e) => setRegistersPerThread(Number(e.target.value))}
+                                   style={{width: '100%'}}/>
+                        </div>
+                        <div>
+                            <label style={{color: '#94a3b8', display: 'block', marginBottom: '0.5rem'}}>
+                                Shared Memory per Block: {(sharedMemPerBlock/1024).toFixed(1)}KB
+                            </label>
+                            <input type="range" min="0" max="49152" step="1024" value={sharedMemPerBlock}
+                                   onChange={(e) => setSharedMemPerBlock(Number(e.target.value))}
+                                   style={{width: '100%'}}/>
+                        </div>
+                    </div>
+                    
+                    <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '1rem', marginBottom: '1.5rem'}}>
+                        <div style={{background: 'rgba(99, 102, 241, 0.2)', padding: '1rem', borderRadius: '0.5rem', textAlign: 'center'}}>
+                            <div style={{color: 'white', fontSize: '1.5rem', fontWeight: 'bold'}}>{actualBlocks}</div>
+                            <div style={{color: '#94a3b8', fontSize: '0.85rem'}}>Active Blocks</div>
+                        </div>
+                        <div style={{background: 'rgba(16, 185, 129, 0.2)', padding: '1rem', borderRadius: '0.5rem', textAlign: 'center'}}>
+                            <div style={{color: 'white', fontSize: '1.5rem', fontWeight: 'bold'}}>{activeWarps}</div>
+                            <div style={{color: '#94a3b8', fontSize: '0.85rem'}}>Active Warps</div>
+                        </div>
+                        <div style={{
+                            background: occupancy >= 75 ? 'rgba(16, 185, 129, 0.3)' : 
+                                       occupancy >= 50 ? 'rgba(245, 158, 11, 0.3)' : 'rgba(239, 68, 68, 0.3)',
+                            padding: '1rem', borderRadius: '0.5rem', textAlign: 'center'
+                        }}>
+                            <div style={{color: 'white', fontSize: '1.5rem', fontWeight: 'bold'}}>{occupancy}%</div>
+                            <div style={{color: '#94a3b8', fontSize: '0.85rem'}}>Occupancy</div>
+                        </div>
+                        <div style={{background: 'rgba(239, 68, 68, 0.2)', padding: '1rem', borderRadius: '0.5rem', textAlign: 'center'}}>
+                            <div style={{color: '#fca5a5', fontSize: '0.9rem', fontWeight: 'bold'}}>{limitingFactor}</div>
+                            <div style={{color: '#94a3b8', fontSize: '0.85rem'}}>Limiting Factor</div>
+                        </div>
+                    </div>
+                    
+                    {/* Occupancy bar */}
+                    <div style={{background: '#1e293b', borderRadius: '0.5rem', padding: '0.25rem', marginBottom: '1rem'}}>
+                        <div style={{
+                            width: `${occupancy}%`,
+                            height: '30px',
+                            background: occupancy >= 75 ? '#22c55e' : occupancy >= 50 ? '#f59e0b' : '#ef4444',
+                            borderRadius: '0.25rem',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: 'white',
+                            fontWeight: 'bold',
+                            transition: 'width 0.3s'
+                        }}>
+                            {occupancy}% Occupancy
+                        </div>
+                    </div>
+                    
+                    <div className="diagram-caption">
+                        Adjust parameters to see how they affect occupancy. Higher occupancy generally allows better latency hiding, 
+                        but isn't always necessary for peak performance.
+                    </div>
+                </div>
+            );
+        };
+
+        // Memory Hierarchy Interactive
+        const MemoryHierarchyInteractive = () => {
+            const [selectedLevel, setSelectedLevel] = React.useState(null);
+            
+            const memoryLevels = [
+                { name: 'Registers', latency: '~1 cycle', bandwidth: '∞ (no transaction)', size: '255 per thread', color: '#fbbf24', scope: 'Thread' },
+                { name: 'Shared Memory', latency: '~5 cycles', bandwidth: '~1.5 TB/s', size: '48-164 KB/SM', color: '#22c55e', scope: 'Block' },
+                { name: 'L1 Cache', latency: '~30 cycles', bandwidth: '~1 TB/s', size: '128 KB/SM', color: '#a855f7', scope: 'SM' },
+                { name: 'L2 Cache', latency: '~200 cycles', bandwidth: '~3 TB/s', size: '40-50 MB', color: '#3b82f6', scope: 'Device' },
+                { name: 'Global Memory (HBM)', latency: '~400-600 cycles', bandwidth: '~3.35 TB/s', size: '80 GB', color: '#ef4444', scope: 'Device' },
+            ];
+            
+            return (
+                <div className="diagram-container">
+                    <div className="diagram-title">GPU Memory Hierarchy</div>
+                    <svg viewBox="0 0 800 450" style={{width: '100%', maxWidth: '800px', margin: '0 auto', display: 'block'}}>
+                        {memoryLevels.map((level, i) => {
+                            const width = 150 + i * 120;
+                            const x = (800 - width) / 2;
+                            const y = 30 + i * 75;
+                            const isSelected = selectedLevel === i;
+                            
+                            return (
+                                <g key={i} 
+                                   onMouseEnter={() => setSelectedLevel(i)}
+                                   onMouseLeave={() => setSelectedLevel(null)}
+                                   style={{cursor: 'pointer'}}>
+                                    <rect x={x} y={y} width={width} height="60" 
+                                          fill={level.color} rx="8"
+                                          stroke={isSelected ? 'white' : 'transparent'}
+                                          strokeWidth="3"
+                                          style={{opacity: isSelected ? 1 : 0.8, transition: 'all 0.3s'}}/>
+                                    <text x="400" y={y + 25} textAnchor="middle" fill="white" fontWeight="bold" fontSize="14">
+                                        {level.name}
+                                    </text>
+                                    <text x="400" y={y + 45} textAnchor="middle" fill="rgba(255,255,255,0.8)" fontSize="11">
+                                        {level.latency} | {level.size}
+                                    </text>
+                                    
+                                    {/* Arrow to next level */}
+                                    {i < memoryLevels.length - 1 && (
+                                        <path d={`M 400 ${y + 60} L 400 ${y + 75}`} 
+                                              stroke="#64748b" strokeWidth="2" markerEnd="url(#arrow-gray)"/>
+                                    )}
+                                </g>
+                            );
+                        })}
+                        
+                        {/* Labels on sides */}
+                        <text x="50" y="60" fill="#94a3b8" fontSize="12">Fastest</text>
+                        <text x="50" y="80" fill="#94a3b8" fontSize="12">Smallest</text>
+                        <text x="50" y="400" fill="#94a3b8" fontSize="12">Slowest</text>
+                        <text x="50" y="420" fill="#94a3b8" fontSize="12">Largest</text>
+                        
+                        <line x1="80" y1="95" x2="80" y2="385" stroke="#64748b" strokeWidth="2" markerEnd="url(#arrow-gray)"/>
+                        
+                        <defs>
+                            <marker id="arrow-gray" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                                <polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/>
+                            </marker>
+                        </defs>
+                    </svg>
+                    
+                    {/* Info panel */}
+                    {selectedLevel !== null && (
+                        <div style={{
+                            marginTop: '1rem',
+                            padding: '1rem',
+                            background: `${memoryLevels[selectedLevel].color}22`,
+                            borderRadius: '0.5rem',
+                            borderLeft: `4px solid ${memoryLevels[selectedLevel].color}`
+                        }}>
+                            <h4 style={{color: 'white', margin: '0 0 0.5rem 0'}}>{memoryLevels[selectedLevel].name}</h4>
+                            <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '1rem'}}>
+                                <div><span style={{color: '#94a3b8'}}>Latency:</span> <span style={{color: 'white'}}>{memoryLevels[selectedLevel].latency}</span></div>
+                                <div><span style={{color: '#94a3b8'}}>Bandwidth:</span> <span style={{color: 'white'}}>{memoryLevels[selectedLevel].bandwidth}</span></div>
+                                <div><span style={{color: '#94a3b8'}}>Size:</span> <span style={{color: 'white'}}>{memoryLevels[selectedLevel].size}</span></div>
+                                <div><span style={{color: '#94a3b8'}}>Scope:</span> <span style={{color: 'white'}}>{memoryLevels[selectedLevel].scope}</span></div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // Memory Coalescing Demo
+        const CoalescingDemo = () => {
+            const [pattern, setPattern] = React.useState('coalesced');
+            
+            return (
+                <div className="diagram-container">
+                    <div className="diagram-title">Memory Access Coalescing</div>
+                    <div style={{display: 'flex', justifyContent: 'center', gap: '1rem', marginBottom: '1.5rem'}}>
+                        <button 
+                            onClick={() => setPattern('coalesced')}
+                            style={{
+                                padding: '0.75rem 1.5rem',
+                                borderRadius: '0.5rem',
+                                border: 'none',
+                                background: pattern === 'coalesced' ? '#22c55e' : '#334155',
+                                color: 'white',
+                                cursor: 'pointer',
+                                fontWeight: '600'
+                            }}
+                        >
+                            Coalesced
+                        </button>
+                        <button 
+                            onClick={() => setPattern('strided')}
+                            style={{
+                                padding: '0.75rem 1.5rem',
+                                borderRadius: '0.5rem',
+                                border: 'none',
+                                background: pattern === 'strided' ? '#f59e0b' : '#334155',
+                                color: 'white',
+                                cursor: 'pointer',
+                                fontWeight: '600'
+                            }}
+                        >
+                            Strided
+                        </button>
+                        <button 
+                            onClick={() => setPattern('random')}
+                            style={{
+                                padding: '0.75rem 1.5rem',
+                                borderRadius: '0.5rem',
+                                border: 'none',
+                                background: pattern === 'random' ? '#ef4444' : '#334155',
+                                color: 'white',
+                                cursor: 'pointer',
+                                fontWeight: '600'
+                            }}
+                        >
+                            Random
+                        </button>
+                    </div>
+                    
+                    <svg viewBox="0 0 800 300" style={{width: '100%', maxWidth: '800px', margin: '0 auto', display: 'block'}}>
+                        {/* Threads */}
+                        <text x="400" y="25" textAnchor="middle" fill="white" fontSize="14" fontWeight="bold">
+                            Warp Threads (T0-T7 shown)
+                        </text>
+                        <g transform="translate(180, 40)">
+                            {[...Array(8)].map((_, i) => (
+                                <g key={i}>
+                                    <rect x={i * 55} y="0" width="50" height="40" fill="#6366f1" rx="4"/>
+                                    <text x={i * 55 + 25} y="25" textAnchor="middle" fill="white" fontSize="12">T{i}</text>
+                                </g>
+                            ))}
+                        </g>
+                        
+                        {/* Access lines */}
+                        <g>
+                            {[...Array(8)].map((_, i) => {
+                                let targetX;
+                                if (pattern === 'coalesced') {
+                                    targetX = 50 + i * 50;
+                                } else if (pattern === 'strided') {
+                                    targetX = 50 + i * 100;
+                                } else {
+                                    targetX = 50 + [3, 7, 1, 5, 0, 6, 2, 4][i] * 100;
+                                }
+                                return (
+                                    <line key={i} 
+                                          x1={180 + i * 55 + 25} y1="85" 
+                                          x2={Math.min(targetX + 20, 750)} y2="150"
+                                          stroke={pattern === 'coalesced' ? '#22c55e' : pattern === 'strided' ? '#f59e0b' : '#ef4444'}
+                                          strokeWidth="2"/>
+                                );
+                            })}
+                        </g>
+                        
+                        {/* Memory */}
+                        <text x="400" y="145" textAnchor="middle" fill="white" fontSize="14" fontWeight="bold">
+                            Global Memory (128-byte cache lines)
+                        </text>
+                        <g transform="translate(50, 160)">
+                            {[...Array(16)].map((_, i) => {
+                                let isAccessed;
+                                if (pattern === 'coalesced') {
+                                    isAccessed = i < 8;
+                                } else if (pattern === 'strided') {
+                                    isAccessed = i % 2 === 0;
+                                } else {
+                                    isAccessed = true;
+                                }
+                                return (
+                                    <rect key={i} x={i * 44} y="0" width="40" height="30" 
+                                          fill={isAccessed ? '#1e293b' : '#0f172a'}
+                                          stroke={isAccessed ? (pattern === 'coalesced' ? '#22c55e' : pattern === 'strided' ? '#f59e0b' : '#ef4444') : '#334155'}
+                                          strokeWidth="2" rx="3"/>
+                                );
+                            })}
+                        </g>
+                        
+                        {/* Cache line indicator */}
+                        {pattern === 'coalesced' && (
+                            <g>
+                                <rect x="48" y="155" width="180" height="45" fill="none" stroke="#22c55e" strokeWidth="3" strokeDasharray="5,3" rx="6"/>
+                                <text x="138" y="215" textAnchor="middle" fill="#22c55e" fontSize="11">1 cache line</text>
+                            </g>
+                        )}
+                        
+                        {/* Stats */}
+                        <g transform="translate(50, 240)">
+                            <rect width="700" height="50" fill={pattern === 'coalesced' ? 'rgba(34, 197, 94, 0.2)' : pattern === 'strided' ? 'rgba(245, 158, 11, 0.2)' : 'rgba(239, 68, 68, 0.2)'} rx="8"/>
+                            <text x="350" y="20" textAnchor="middle" fill="white" fontWeight="bold" fontSize="14">
+                                {pattern === 'coalesced' ? '✓ 1 Memory Transaction - 100% Efficiency' : 
+                                 pattern === 'strided' ? '⚠️ 8 Memory Transactions - 12.5% Efficiency' :
+                                 '✗ 8+ Memory Transactions - <12.5% Efficiency'}
+                            </text>
+                            <text x="350" y="40" textAnchor="middle" fill="#94a3b8" fontSize="12">
+                                {pattern === 'coalesced' ? 'All threads access consecutive addresses - single 128-byte burst' :
+                                 pattern === 'strided' ? 'Threads skip addresses - multiple cache lines needed' :
+                                 'Random access pattern - worst case for memory bandwidth'}
+                            </text>
+                        </g>
+                    </svg>
+                </div>
+            );
+        };
+
+        // Render all components
+        ReactDOM.render(<CPUGPUComparison />, document.getElementById('cpu-gpu-comparison'));
+        ReactDOM.render(<CPUGPUDetailedTable />, document.getElementById('cpu-gpu-detailed-table'));
+        ReactDOM.render(<ThreadHierarchyInteractive />, document.getElementById('thread-hierarchy-interactive'));
+        ReactDOM.render(<ThreadBlockVisualization />, document.getElementById('thread-block-visualization'));
+        ReactDOM.render(<WarpVisualization />, document.getElementById('warp-visualization'));
+        ReactDOM.render(<SIMTArchitectureSlide />, document.getElementById('simt-architecture-slide'));
+        ReactDOM.render(<BranchDivergenceDemo />, document.getElementById('branch-divergence-demo'));
+        ReactDOM.render(<WarpSchedulingSlide />, document.getElementById('warp-scheduling-slide'));
+        ReactDOM.render(<WarpSchedulerDemo />, document.getElementById('warp-scheduler-demo'));
+        ReactDOM.render(<OccupancyCalculator />, document.getElementById('occupancy-calculator'));
+        ReactDOM.render(<MemoryHierarchyInteractive />, document.getElementById('memory-hierarchy-interactive'));
+        ReactDOM.render(<CoalescingDemo />, document.getElementById('coalescing-demo'));
+    </script>
+</body>
+</html>

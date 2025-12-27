@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chapter 5: Three Data Path Options</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: #fff; min-height: 100vh; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { text-align: center; font-size: 2em; margin-bottom: 30px; color: #00d4ff; }
+        .paths { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+        .path { background: rgba(255,255,255,0.05); border-radius: 15px; padding: 20px; border: 2px solid rgba(255,255,255,0.1); }
+        .path h2 { text-align: center; margin-bottom: 15px; font-size: 1.1em; }
+        .path-1 h2 { color: #f39c12; }
+        .path-2 h2 { color: #3498db; }
+        .path-3 h2 { color: #e74c3c; }
+        .diagram { background: #0a0a15; border-radius: 10px; padding: 15px; margin: 15px 0; min-height: 200px; position: relative; }
+        .component { padding: 10px; border-radius: 8px; text-align: center; font-size: 11px; font-weight: bold; position: absolute; }
+        .ssd { background: linear-gradient(135deg, #27ae60, #1e8449); width: 70px; left: 10px; }
+        .sysmem { background: linear-gradient(135deg, #f39c12, #d68910); width: 80px; }
+        .gpu { background: linear-gradient(135deg, #e74c3c, #c0392b); width: 70px; right: 10px; }
+        .cpu { background: linear-gradient(135deg, #3498db, #2980b9); width: 60px; }
+        .arrow { position: absolute; height: 3px; background: #fff; }
+        .arrow::after { content: '▶'; position: absolute; right: -8px; top: -8px; font-size: 12px; }
+        .steps { margin-top: 15px; font-size: 12px; }
+        .step { padding: 8px; background: rgba(0,0,0,0.3); margin: 5px 0; border-radius: 5px; border-left: 3px solid; }
+        .path-1 .step { border-color: #f39c12; }
+        .path-2 .step { border-color: #3498db; }
+        .path-3 .step { border-color: #e74c3c; }
+        .pros-cons { margin-top: 15px; font-size: 11px; }
+        .pro { color: #2ecc71; }
+        .con { color: #e74c3c; }
+        .table { width: 100%; border-collapse: collapse; margin-top: 30px; font-size: 13px; }
+        .table th, .table td { padding: 12px; text-align: center; border: 1px solid rgba(255,255,255,0.1); }
+        .table th { background: rgba(0,212,255,0.2); color: #00d4ff; }
+        .nav { text-align: center; margin-top: 30px; }
+        .nav a { color: #00d4ff; text-decoration: none; margin: 0 15px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Chapter 5: Three Data Path Options</h1>
+        
+        <div class="paths">
+            <div class="path path-1">
+                <h2>Path 1: Traditional (CPU-Mediated)</h2>
+                <div class="diagram">
+                    <div class="component ssd" style="top: 80px;">SSD</div>
+                    <div class="component sysmem" style="top: 30px; left: 50%; transform: translateX(-50%);">System<br>Memory</div>
+                    <div class="component gpu" style="top: 80px;">GPU<br>Memory</div>
+                    <div class="component cpu" style="bottom: 20px; left: 50%; transform: translateX(-50%);">CPU</div>
+                </div>
+                <div class="steps">
+                    <div class="step">1. CPU submits NVMe command</div>
+                    <div class="step">2. SSD → System Memory (bounce)</div>
+                    <div class="step">3. CPU copies to GPU Memory</div>
+                    <div class="step">4. CPU processes completion</div>
+                </div>
+                <div class="pros-cons">
+                    <p class="pro">✓ Mature, stable drivers</p>
+                    <p class="con">✗ Two memory copies</p>
+                    <p class="con">✗ Full CPU involvement</p>
+                </div>
+            </div>
+
+            <div class="path path-2">
+                <h2>Path 2: GPUDirect Storage</h2>
+                <div class="diagram">
+                    <div class="component ssd" style="top: 50px;">SSD</div>
+                    <div class="component gpu" style="top: 50px;">GPU<br>Memory</div>
+                    <div class="component cpu" style="bottom: 20px; left: 50%; transform: translateX(-50%);">CPU<br>(Control)</div>
+                </div>
+                <div class="steps">
+                    <div class="step">1. CPU submits NVMe command</div>
+                    <div class="step">2. SSD → GPU Memory (P2P DMA)</div>
+                    <div class="step">3. CPU processes completion</div>
+                </div>
+                <div class="pros-cons">
+                    <p class="pro">✓ No bounce buffer</p>
+                    <p class="pro">✓ Lower latency</p>
+                    <p class="con">✗ CPU still in control path</p>
+                </div>
+            </div>
+
+            <div class="path path-3">
+                <h2>Path 3: GPU-Initiated I/O</h2>
+                <div class="diagram">
+                    <div class="component ssd" style="top: 70px;">SSD</div>
+                    <div class="component gpu" style="top: 70px;">GPU</div>
+                    <div style="position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); font-size: 10px; color: #888;">No CPU!</div>
+                </div>
+                <div class="steps">
+                    <div class="step" style="border-color: #e74c3c;">1. Allocate CMD ID (SYNC)</div>
+                    <div class="step">2. Write to SQ</div>
+                    <div class="step" style="border-color: #e74c3c;">3. Ring doorbell (SYNC)</div>
+                    <div class="step">4. Poll CQ</div>
+                    <div class="step" style="border-color: #e74c3c;">5. Ring doorbell (SYNC)</div>
+                    <div class="step" style="border-color: #e74c3c;">6. Wait ACK (SYNC)</div>
+                </div>
+                <div class="pros-cons">
+                    <p class="pro">✓ Zero CPU involvement</p>
+                    <p class="con">✗ Exposes all sync bottlenecks</p>
+                    <p class="con">✗ 3.1% GPU utilization</p>
+                </div>
+            </div>
+        </div>
+
+        <table class="table">
+            <tr><th>Aspect</th><th>Traditional</th><th>GPUDirect</th><th>GPU-Initiated</th></tr>
+            <tr><td>Data Copies</td><td>2</td><td>1</td><td>1</td></tr>
+            <tr><td>CPU Involvement</td><td>Full</td><td>Control only</td><td>None</td></tr>
+            <tr><td>Latency</td><td>Highest</td><td>Medium</td><td>Lowest*</td></tr>
+            <tr><td>GPU Utilization</td><td>N/A</td><td>Good</td><td style="color:#e74c3c">Poor (3.1%)</td></tr>
+            <tr><td>Maturity</td><td>Production</td><td>Production</td><td>Experimental</td></tr>
+        </table>
+
+        <div class="nav">
+            <a href="../chapter4_cpu_vs_gpu/index.html">← Chapter 4</a>
+            <a href="../index.html">Home</a>
+            <a href="../chapter6_nvme_queue_ops/index.html">Chapter 6 →</a>
+        </div>
+    </div>
+</body>
+</html>

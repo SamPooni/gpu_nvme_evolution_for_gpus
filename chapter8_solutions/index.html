@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chapter 8: Challenges & Recommendations</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: #fff; min-height: 100vh; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { text-align: center; font-size: 2em; margin-bottom: 30px; color: #00d4ff; }
+        .section { margin-bottom: 40px; }
+        h2 { color: #f39c12; margin-bottom: 20px; text-align: center; }
+        .challenges { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 20px; }
+        .challenge { background: rgba(231,76,60,0.1); border: 2px solid #e74c3c; border-radius: 15px; padding: 20px; }
+        .challenge h3 { color: #e74c3c; margin-bottom: 10px; display: flex; align-items: center; gap: 10px; }
+        .challenge p { color: #aaa; font-size: 0.9em; line-height: 1.6; }
+        .recommendations { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; }
+        .recommendation { background: rgba(46,204,113,0.1); border: 2px solid #2ecc71; border-radius: 15px; padding: 20px; }
+        .recommendation h3 { color: #2ecc71; margin-bottom: 10px; }
+        .recommendation p { color: #aaa; font-size: 0.9em; line-height: 1.6; }
+        .summary { background: rgba(0,212,255,0.1); border: 2px solid #00d4ff; border-radius: 15px; padding: 30px; text-align: center; margin-top: 30px; }
+        .summary h3 { color: #00d4ff; margin-bottom: 15px; font-size: 1.3em; }
+        .nav { text-align: center; margin-top: 30px; }
+        .nav a { color: #00d4ff; text-decoration: none; margin: 0 15px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Chapter 8: Challenges & Recommendations</h1>
+        
+        <div class="section">
+            <h2>⚠️ Five Key Challenges</h2>
+            <div class="challenges">
+                <div class="challenge">
+                    <h3>❌ 1. Queue Pair Scaling</h3>
+                    <p>Current NVMe designs assume O(100) queues for O(100) CPU cores. GPUs need O(100,000) independent submission contexts.</p>
+                </div>
+                <div class="challenge">
+                    <h3>❌ 2. Doorbell Bottleneck</h3>
+                    <p>Single-register doorbells serialize all threads accessing a queue. Only 1/32 threads active = 3.1% utilization.</p>
+                </div>
+                <div class="challenge">
+                    <h3>❌ 3. Command ID Allocation</h3>
+                    <p>Atomic allocation of unique command IDs creates serialization. Every I/O starts with a sync point.</p>
+                </div>
+                <div class="challenge">
+                    <h3>❌ 4. Completion Ordering</h3>
+                    <p>In-order completion queue head advancement forces thread synchronization even after parallel polling.</p>
+                </div>
+                <div class="challenge">
+                    <h3>❌ 5. PCIe Transport Overhead</h3>
+                    <p>Small-block transfers at 100M IOPS stress the entire data path. Protocol overhead becomes significant.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>✅ Four Recommendations</h2>
+            <div class="recommendations">
+                <div class="recommendation">
+                    <h3>1. Protocol Re-evaluation</h3>
+                    <p>Fundamentally reassess NVMe assumptions for GPU workloads. Polling preferred over interrupts. New queue designs needed.</p>
+                </div>
+                <div class="recommendation">
+                    <h3>2. Queue Arbitration Redesign</h3>
+                    <p>Rethink doorbell mechanisms for polling-based, parallel access. Multiple doorbells or doorbell-less submission.</p>
+                </div>
+                <div class="recommendation">
+                    <h3>3. Massive Queue Support</h3>
+                    <p>Support thousands of queues for true parallel access. Move from ~100 queues to ~10K+ queues.</p>
+                </div>
+                <div class="recommendation">
+                    <h3>4. End-to-End Optimization</h3>
+                    <p>Reduce overhead throughout the stack down to PCIe transport. Multi-GPU coordination and header optimization.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="summary">
+            <h3>🚀 Conclusion</h3>
+            <p>The NVMe protocol served CPU-centric computing well for a decade.<br>
+            AI/ML workloads have fundamentally changed storage access patterns.<br>
+            <strong>Protocol evolution is essential for the next generation of AI infrastructure.</strong></p>
+        </div>
+
+        <div class="nav">
+            <a href="../chapter7_sync_tax/index.html">← Chapter 7</a>
+            <a href="../index.html">Home</a>
+        </div>
+    </div>
+</body>
+</html>
