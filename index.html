@@ -197,6 +197,26 @@
             background: linear-gradient(135deg, rgba(239, 68, 68, 0.3) 0%, rgba(220, 38, 38, 0.3) 100%);
         }
 
+        .chapter-4 .chapter-header {
+            background: linear-gradient(135deg, rgba(245, 158, 11, 0.3) 0%, rgba(217, 119, 6, 0.3) 100%);
+        }
+
+        .chapter-5 .chapter-header {
+            background: linear-gradient(135deg, rgba(168, 85, 247, 0.3) 0%, rgba(139, 92, 246, 0.3) 100%);
+        }
+
+        .chapter-6 .chapter-header {
+            background: linear-gradient(135deg, rgba(6, 182, 212, 0.3) 0%, rgba(8, 145, 178, 0.3) 100%);
+        }
+
+        .chapter-7 .chapter-header {
+            background: linear-gradient(135deg, rgba(236, 72, 153, 0.3) 0%, rgba(219, 39, 119, 0.3) 100%);
+        }
+
+        .chapter-8 .chapter-header {
+            background: linear-gradient(135deg, rgba(34, 197, 94, 0.3) 0%, rgba(14, 165, 233, 0.3) 100%);
+        }
+
         .chapter-number {
             font-size: 3rem;
             font-weight: bold;
@@ -209,6 +229,11 @@
         .chapter-1 .chapter-number { color: #22c55e; }
         .chapter-2 .chapter-number { color: #0ea5e9; }
         .chapter-3 .chapter-number { color: #ef4444; }
+        .chapter-4 .chapter-number { color: #f59e0b; }
+        .chapter-5 .chapter-number { color: #a855f7; }
+        .chapter-6 .chapter-number { color: #06b6d4; }
+        .chapter-7 .chapter-number { color: #ec4899; }
+        .chapter-8 .chapter-number { color: #22c55e; }
 
         .chapter-title {
             color: white;
@@ -504,6 +529,111 @@
                     </a>
                 </div>
             </article>
+
+            <!-- Chapter 4 -->
+            <article class="chapter-card chapter-4">
+                <div class="chapter-header">
+                    <span class="chapter-number">04</span>
+                    <h3 class="chapter-title">CPU vs GPU I/O Comparison</h3>
+                    <p class="chapter-subtitle">Fundamental architectural differences</p>
+                </div>
+                <div class="chapter-content">
+                    <ul class="chapter-topics">
+                        <li>CPU thread model vs GPU SIMT</li>
+                        <li>Interrupt handling differences</li>
+                        <li>Queue access contention patterns</li>
+                        <li>Context switching overhead</li>
+                        <li>Performance metrics comparison</li>
+                    </ul>
+                    <a href="chapter4_cpu_vs_gpu/index.html" class="chapter-link">
+                        Read Chapter 4 →
+                    </a>
+                </div>
+            </article>
+
+            <!-- Chapter 5 -->
+            <article class="chapter-card chapter-5">
+                <div class="chapter-header">
+                    <span class="chapter-number">05</span>
+                    <h3 class="chapter-title">Data Paths & Topology</h3>
+                    <p class="chapter-subtitle">GPU-to-SSD data flow architectures</p>
+                </div>
+                <div class="chapter-content">
+                    <ul class="chapter-topics">
+                        <li>Traditional CPU bounce buffer path</li>
+                        <li>GPUDirect peer-to-peer transfers</li>
+                        <li>PCIe switch topologies</li>
+                        <li>Control path vs data path</li>
+                        <li>AI training/inference configurations</li>
+                    </ul>
+                    <a href="chapter5_data_paths/index.html" class="chapter-link">
+                        Read Chapter 5 →
+                    </a>
+                </div>
+            </article>
+
+            <!-- Chapter 6 -->
+            <article class="chapter-card chapter-6">
+                <div class="chapter-header">
+                    <span class="chapter-number">06</span>
+                    <h3 class="chapter-title">NVMe Queue Operations</h3>
+                    <p class="chapter-subtitle">Deep dive into submission/completion</p>
+                </div>
+                <div class="chapter-content">
+                    <ul class="chapter-topics">
+                        <li>NVMe command structure (64 bytes)</li>
+                        <li>Submission queue management</li>
+                        <li>Completion queue processing</li>
+                        <li>Phase bit protocol</li>
+                        <li>Head/tail pointer semantics</li>
+                    </ul>
+                    <a href="chapter6_nvme_queue_ops/index.html" class="chapter-link">
+                        Read Chapter 6 →
+                    </a>
+                </div>
+            </article>
+
+            <!-- Chapter 7 -->
+            <article class="chapter-card chapter-7">
+                <div class="chapter-header">
+                    <span class="chapter-number">07</span>
+                    <h3 class="chapter-title">The Synchronization Tax</h3>
+                    <p class="chapter-subtitle">Quantifying GPU overhead from NVMe</p>
+                </div>
+                <div class="chapter-content">
+                    <ul class="chapter-topics">
+                        <li>Five serialization points identified</li>
+                        <li>Command ID allocation contention</li>
+                        <li>Doorbell write serialization</li>
+                        <li>Completion polling overhead</li>
+                        <li>SM utilization impact analysis</li>
+                    </ul>
+                    <a href="chapter7_sync_tax/index.html" class="chapter-link">
+                        Read Chapter 7 →
+                    </a>
+                </div>
+            </article>
+
+            <!-- Chapter 8 -->
+            <article class="chapter-card chapter-8">
+                <div class="chapter-header">
+                    <span class="chapter-number">08</span>
+                    <h3 class="chapter-title">Solutions & Future</h3>
+                    <p class="chapter-subtitle">Protocol evolution for GPU-native storage</p>
+                </div>
+                <div class="chapter-content">
+                    <ul class="chapter-topics">
+                        <li>NVMe protocol revision proposals</li>
+                        <li>Warp-aligned queue designs</li>
+                        <li>Hardware-assisted completion</li>
+                        <li>GPU-aware queue arbitration</li>
+                        <li>Industry roadmap and timeline</li>
+                    </ul>
+                    <a href="chapter8_solutions/index.html" class="chapter-link">
+                        Read Chapter 8 →
+                    </a>
+                </div>
+            </article>
         </div>
 
         <section class="diagram-section">
@@ -533,10 +663,36 @@
             </div>
         </section>
 
+        <!-- Credits Section -->
+        <section class="sources-section" style="margin-top: 2rem;">
+            <h2>📜 Credits & References</h2>
+            <div class="source-grid">
+                <div class="source-item" style="grid-column: span 2;">
+                    <h4>Primary Source</h4>
+                    <p><strong>"Why does NVMe need to evolve for efficient storage access from GPUs?"</strong></p>
+                    <p style="margin-top: 0.5rem; color: #94a3b8;">
+                        <strong>Authors:</strong> Chandra Guda (SMTS), Suresh Rajgopal (DMTS), Pierre Labat (SMTS)<br>
+                        <strong>Organization:</strong> Micron Technology<br>
+                        <strong>Presented at:</strong> SNIA Developer Conference (SDC25)<br>
+                        <strong>Location:</strong> Hyatt Regency Santa Clara, CA<br>
+                        <strong>Date:</strong> September 15-17, 2025
+                    </p>
+                </div>
+                <div class="source-item">
+                    <h4>ECE408 Course Materials</h4>
+                    <p>Applied Parallel Programming, University of Illinois at Urbana-Champaign</p>
+                    <p style="margin-top: 0.5rem; color: #94a3b8;">David Kirk (NVIDIA), Wen-mei W. Hwu, Volodymyr Kindratenko, Steven S. Lumetta</p>
+                </div>
+            </div>
+        </section>
+
         <footer>
             <p>GPU-NVMe Impedance Mismatch Documentation Series</p>
             <p style="margin-top: 0.5rem; font-size: 0.9rem;">
-                Based on ECE408 course materials and Industry Analysis presentations
+                © 2025 SNIA Developer Conference. All Rights Reserved. | © Micron Technology
+            </p>
+            <p style="margin-top: 0.5rem; font-size: 0.85rem; color: #64748b;">
+                Documentation compiled for educational and technical reference purposes.
             </p>
         </footer>
     </div>
